@@ -1,0 +1,15 @@
+---
+description: React annotator UI conventions
+globs: "frontend/**/*.ts,frontend/**/*.tsx,frontend/**/*.css"
+alwaysApply: false
+---
+
+# Frontend
+
+- Views live in `frontend/src/App.tsx` (`projects` | `project` | `annotate`). No client-side router.
+- All HTTP goes through `frontend/src/api/client.ts` (`const API='/api'`). Add types in `frontend/src/types.ts`.
+- Canvas contract is `AnnotationCanvasHandle`: `loadMaskBlob`, `clearMask`, `exportMaskDataUrl`, `undo`. Do not decode frames in the browser; use `frameUrl(mediaId, frame)`.
+- Prompt tools (`positive` / `negative` / `box`) call SAM2 via `createPrompt` + `predictPrompt`. Brush/eraser paint locally and set dirty. Save always sends `source: 'manual'`.
+- Autosave only when `dirty` and not `promptBusy`. Default interval is 3s, brush default 15px.
+- Named exports for components (`export const AnnotationCanvas=...`). Keep CSS in `frontend/src/styles.css`.
+- Vite proxies `/api` to `http://localhost:8091`. Production nginx in `frontend/nginx.conf` proxies `/api` to `http://backend:8090/api/`.

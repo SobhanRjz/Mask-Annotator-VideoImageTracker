@@ -1,0 +1,26 @@
+---
+description: FastAPI route and service conventions
+globs: "backend/**/*.py"
+alwaysApply: false
+---
+
+# Backend Python
+
+- Routes in `backend/app/api/routes/` stay thin: Pydantic in, one service call, HTTP error mapping.
+- Domain logic belongs in `backend/app/services/`. Canonical examples: `export_service.py` (clear layout), `annotation_service.py` (mask files + SQLite).
+- Live API is mounted in `backend/app/api/router.py`. Do not attach leftover CVAT modules (`cvat_service.py`, `routes/tasks.py`, `routes/health.py`) unless explicitly requested.
+- SQLite schema and `db()` live in `backend/app/core/db.py`. Keep foreign keys on. Annotation source of truth is a binary mask PNG path, not polygons.
+- Match the file you edit. For new modules, prefer the spaced layout of `export_service.py` over one-line packing.
+- Settings come from `backend/app/core/settings.py`. Paths: `data_root/annotator.db`, `media/`, `masks/`, `exports/`.
+
+```python
+# ✅ GOOD — route adapter
+@router.post("/masks")
+def save(x: SaveIn):
+    try:
+        return annotation_service.save(...)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+# ❌ BAD — OpenCV / SAM2 / SQL in the route module
+```

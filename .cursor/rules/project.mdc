@@ -1,0 +1,12 @@
+---
+description: Repo-wide facts for Sewer SAM2 Annotator
+alwaysApply: true
+---
+
+# Project
+
+- Stack: React 19 + TypeScript UI, FastAPI backend, SQLite, Docker, SAM2.1 Hiera Small. No CVAT at runtime.
+- Ports: UI `8092`, API `8091` (`/docs`). Data volume `annotator-data`. Model cache `sam2-models`.
+- Before changing persistence, SAM2, tracking, or exports, read `doc/architecture.md`. Operational rules: `AGENTS.md`.
+- Implement the agreed plan. Do not silently redesign. Do not delete Docker volumes.
+- Use Mercurial unless the user asks for git. Commit only when asked.

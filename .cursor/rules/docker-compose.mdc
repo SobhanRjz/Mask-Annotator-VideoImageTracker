@@ -1,0 +1,14 @@
+---
+description: Docker Compose, images, and volume constraints
+globs: "compose.yaml,**/Dockerfile,**/nginx.conf"
+alwaysApply: false
+---
+
+# Docker
+
+- `backend` publishes host `8091` → container `8090`. `frontend` publishes `8092` → `80`.
+- GPU: `gpus: all` on backend only. Image is `pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime` with SAM2 cloned to `/opt/sam2` and `SAM2_BUILD_CUDA=0`.
+- Backend Python deps come from `backend/pyproject.toml` + `backend/uv.lock`. The image copies uv `0.10.3` and installs into the PyTorch system interpreter (`UV_SYSTEM_PYTHON=1`). Do not reintroduce `requirements.txt` as a second source of truth.
+- Volumes: `annotator-data:/data`, `sam2-models:/models`. Never remove them from compose as a “cleanup”.
+- Frontend nginx must keep `client_max_body_size 20G` and `/api/` `proxy_read_timeout 3600s` (large uploads + long tracking).
+- Backend command: `uvicorn app.main:app --host 0.0.0.0 --port 8090`. Do not change the internal listen port without updating nginx `proxy_pass` and host mapping together.
