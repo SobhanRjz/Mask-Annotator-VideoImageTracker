@@ -1,0 +1,29 @@
+[project]
+name = "sewer-annotator-backend"
+version = "0.2.0"
+description = "FastAPI + SAM2 backend for Sewer SAM2 Annotator"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "fastapi==0.116.1",
+    "uvicorn[standard]==0.35.0",
+    "huggingface-hub>=0.34,<1",
+    "numpy>=2.1.2,<2.2",
+    "pillow>=10,<12",
+    "pydantic>=2.11,<3",
+    "pydantic-settings>=2.10,<3",
+    "python-multipart>=0.0.20,<1",
+    "opencv-python-headless>=4.10,<5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.uv]
+package = false
+python-preference = "system"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
