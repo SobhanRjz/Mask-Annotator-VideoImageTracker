@@ -6,7 +6,7 @@ The project media library renders one large card per file. As stills and videos 
 
 ## Decision
 
-Manual **Done** checkbox per video and one Done for the whole stills set. Library header tabs **All / Completed / Not annotated** (Done flag, not mask coverage). Videos remain individual rows. All `kind=image` media collapse into one **Pictures** row with Annotate, Done, and Delete. Annotate opens the existing editor with every still in the left column. SAM2, tracking, mask files, and exports stay per media id. Do not merge stills into one backend media item.
+Manual **Done** checkbox per video and one Done for the whole stills set. Library header tabs **All / Completed / Not annotated** (Done flag, not mask coverage). Videos remain individual rows. All `kind=image` media collapse into one **Pictures** row with Annotate, Done, and Delete. Annotate opens the existing editor with every still in the left column. SAM2 prompts, tracking, mask files, and exports stay per media id. Tracking across Pictures builds a temp JPEG sequence from the album (id order), then writes auto masks back onto each still at frame 0. Do not merge stills into one backend media item.
 
 ## Data model
 
@@ -75,10 +75,10 @@ When the open media `kind === 'image'`:
 
 - Left rail title **Pictures**. The list is every project still (`id` ascending): thumb of frame 0, filename, annotation count, active state. Click navigates to that still’s media URL. Unsaved editor state follows today’s frame-change path (prompt session closed, editor reset). Autosave still runs on its interval while the still is open and dirty.
 - Header: `{filename}` and `{project} · Pictures · {index} of {count}`. Header **Done** toggles the album endpoint (same flag as the library row).
-- ← / → and the footer prev/next step one still. Shift+arrow steps 10 stills, clamped. The video timeline, frame-number jump, and SAM2 tracker card are hidden. Tracking is not started from stills.
+- ← / → and the footer prev/next step one still. Shift+arrow steps 10 stills, clamped. The SAM2 tracker card is shown. From/To are 0-based album indices (same order as the left Pictures list). Tracking treats the stills album as a virtual video: seed on the From picture, propagate to To, persist stride hits plus the end still onto each still’s `media_id` at frame `0`.
 - Prompt, brush, save, exclude, and per-still masks keep using that still’s `media_id` and frame `0`.
 
-Opening an image URL directly uses the same playlist. Opening a video is unchanged (frames, tracker, timeline).
+Opening an image URL directly uses the same playlist. Opening a video is unchanged (frames, tracker, timeline). Pictures Annotate shows the same SAM2 tracker; From/To are album indices.
 
 ## Frontend modules
 
@@ -115,9 +115,12 @@ Frontend (`frontend/src/mediaLibrary.test.ts`):
 - Album complete only when every still is flagged
 - `firstIncompleteStill` prefers the lowest incomplete id
 - Playlist next/previous clamps and steps by 10
+- Picture tracker uses album indices; seed media is the From still
+
+Run from `backend`: `python -m unittest tests.test_media_complete tests.test_tracking_stop`. From `frontend`: `npm run build`.
 
 Run from `backend`: `python -m unittest tests.test_media_complete`. From `frontend`: `npm run build`.
 
 ## Architecture note
 
-Update `doc/architecture.md` data model (`annotation_complete`) and API map (`PATCH` media complete, project stills complete/delete). Do not introduce a CVAT dependency. GPU work stays serialized; stills must not call tracking.
+Update `doc/architecture.md` data model (`annotation_complete`) and API map (`PATCH` media complete, project stills complete/delete). Do not introduce a CVAT dependency. GPU work stays serialized; stills tracking reuses the same SAM2 lock and one-worker pool as video.
