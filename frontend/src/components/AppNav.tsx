@@ -18,6 +18,7 @@ export function AppNav(props:{
       <nav className="product-links">
         <NavLink to="/" end>Dashboard</NavLink>
         <NavLink to="/projects">Projects</NavLink>
+        <NavLink to="/settings">Settings</NavLink>
       </nav>
       <div className="header-actions">
         {props.trailing}
