@@ -18,6 +18,15 @@ export function defectShare(count:number,total:number){
   return Math.round((count/total)*100);
 }
 
+export function remainingFrames(extracted:number,annotated:number){
+  return Math.max(0,extracted-annotated);
+}
+
+export function annotationPace(annotated:number,seconds:number){
+  if(!annotated||!seconds)return 0;
+  return Math.round(annotated/(seconds/3600));
+}
+
 export function heatmapForFilter(report:{heatmap:HeatGrid;heatmaps?:Record<string,HeatGrid>},filter:string):HeatGrid{
   if(filter==='all')return report.heatmap;
   return report.heatmaps?.[filter]??{
