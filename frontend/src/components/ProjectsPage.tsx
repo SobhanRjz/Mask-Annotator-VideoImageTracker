@@ -23,12 +23,15 @@ export function ProjectsPage(props:{
   return <main className="catalog">
       <section className="catalog-hero">
         <div>
-          <div className="eyebrow">LIBRARY</div>
-          <h1>Annotation projects</h1>
-          <p>Each job has a unique name and its own URL. Open a project to extract frames and annotate.</p>
+          <div className="eyebrow">INSPECTION LIBRARY</div>
+          <h1>Your projects</h1>
+          <p>Organize footage, review annotation progress, and return to active inspections.</p>
         </div>
         <div className="catalog-toolbar">
-          <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search by name…" aria-label="Search projects"/>
+          <label className="catalog-search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search projects" aria-label="Search projects"/>
+          </label>
           <label className={`upload-button${props.boot!=='ready'||props.busy?' disabled':''}`}>
             Import backup
             <input type="file" accept=".zip,application/zip" disabled={props.boot!=='ready'||props.busy} onChange={e=>{props.onImport(e.target.files?.[0]??null);e.target.value=''}}/>
@@ -45,13 +48,13 @@ export function ProjectsPage(props:{
                   ? <img src={api.frameUrl(item.cover_media_id,0,480)} alt=""/>
                   : <div className="catalog-ph">No media yet</div>}
                 <span className="catalog-slug">/{item.slug||item.id}</span>
+                <span className="catalog-count">{item.annotation_count} masks</span>
               </div>
               <div className="catalog-body">
-                <h2>{item.name}</h2>
+                <div className="catalog-title-row"><h2>{item.name}</h2><span aria-hidden="true">↗</span></div>
                 <p>{item.description||'Sewer inspection annotation job'}</p>
                 <div className="meta">
                   <span>{item.media_count} media</span>
-                  <span>{item.annotation_count} masks</span>
                   <TimeChip seconds={item.annotation_seconds??0} compact/>
                 </div>
               </div>
