@@ -110,8 +110,8 @@ class ExportFormatTests(unittest.TestCase):
         self.assertEqual(crack['bbox'], [1, 1, 3, 3])
         self.assertEqual(crack['iscrowd'], 0)
         self.assertEqual(crack['area'], 9)
-        self.assertIsInstance(crack['segmentation'], list)
-        self.assertGreaterEqual(len(crack['segmentation'][0]), 6)
+        self.assertIsInstance(crack['segmentation'], dict)
+        self.assertEqual(crack['segmentation']['size'], [8, 8])
         names = zipfile.ZipFile(path).namelist()
         self.assertTrue(any(name.startswith('images/') and name.endswith('.jpg') for name in names))
         self.assertFalse(any('_f000002.jpg' in name for name in names))
@@ -154,11 +154,33 @@ class ExportFormatTests(unittest.TestCase):
                 name for name in archive.namelist()
                 if name.startswith('SegmentationClass/') and name.endswith('_f000000.png')
             )
-            pixels = np.asarray(Image.open(io.BytesIO(archive.read(class_name))))
-        self.assertEqual(tuple(pixels[1, 1]), (228, 91, 91))
-        self.assertEqual(tuple(pixels[0, 0]), (0, 0, 0))
+            class_image = Image.open(io.BytesIO(archive.read(class_name)))
+            pixels = np.asarray(class_image)
+            object_name = class_name.replace('SegmentationClass/', 'SegmentationObject/')
+            object_image = Image.open(io.BytesIO(archive.read(object_name)))
+            self.assertIn('ImageSets/Segmentation/train.txt', archive.namelist())
+            self.assertIn('ImageSets/Segmentation/trainval.txt', archive.namelist())
+        self.assertEqual(class_image.mode, 'P')
+        self.assertEqual(object_image.mode, 'P')
+        self.assertEqual(int(pixels[1, 1]), 1)
+        self.assertEqual(int(pixels[0, 0]), 0)
         labelmap = self._read(path, 'labelmap.txt').decode()
         self.assertIn('Crack:228,91,91::', labelmap)
+
+    def test_coco_rle_preserves_holes_and_disconnected_regions(self):
+        from app.services.export_service import coco_segmentation
+        mask = np.zeros((8, 9), dtype=bool)
+        mask[1:7, 1:7] = True
+        mask[3:5, 3:5] = False
+        mask[0, 8] = True
+        rle = coco_segmentation(mask)
+        flat = []
+        value = 0
+        for count in rle['counts']:
+            flat.extend([value] * count)
+            value = 1 - value
+        decoded = np.asarray(flat, dtype=bool).reshape(rle['size'], order='F')
+        np.testing.assert_array_equal(decoded, mask)
 
     def test_excluded_frames_omit_images_and_annotations(self):
         self._annotation(self.mid_a, 2, self.lid_a_crack, 'manual', (1, 1, 2, 2))

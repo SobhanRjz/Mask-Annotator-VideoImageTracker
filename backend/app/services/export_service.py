@@ -50,13 +50,6 @@ def mask_to_rle(mask: np.ndarray):
 
 
 def coco_segmentation(mask: np.ndarray):
-    polygons = contours(mask, cv2.RETR_CCOMP)
-    if polygons:
-        return [
-            contour.astype(float).reshape(-1).tolist()
-            for contour in polygons
-            if len(contour) >= 3
-        ]
     return mask_to_rle(mask)
 
 
@@ -294,8 +287,8 @@ class ExportService:
                         }
                     )
                     voc_list.append(Path(file_name).stem)
-                    voc_class = np.zeros((height, width, 3), dtype=np.uint8)
-                    voc_instance = np.zeros((height, width), dtype=np.uint16)
+                    voc_class = np.zeros((height, width), dtype=np.uint8)
+                    voc_instance = np.zeros((height, width), dtype=np.uint8)
                     frame_yolo_lines: list[str] = []
 
                     for instance_index, annotation in enumerate(frame_annotations, start=1):
@@ -337,17 +330,11 @@ class ExportService:
                                 masks_dir / f"ann_{annotation['id']}.png",
                             )
                         if fmt == 'voc':
-                            color = hex_rgb(
-                                next(
-                                    (
-                                        row['color']
-                                        for row in label_rows
-                                        if row['id'] == annotation['label_id']
-                                    ),
-                                    '#808080',
+                            if instance_index >= 255:
+                                raise ValueError(
+                                    'VOC supports at most 254 instances per image'
                                 )
-                            )
-                            voc_class[mask] = color
+                            voc_class[mask] = category_id
                             voc_instance[mask] = instance_index
                         for contour in contours(mask, cv2.RETR_EXTERNAL):
                             points: list[float] = []
@@ -368,12 +355,12 @@ class ExportService:
                         '\n'.join(frame_yolo_lines) + ('\n' if frame_yolo_lines else '')
                     )
                     if fmt == 'voc':
-                        Image.fromarray(voc_class, 'RGB').save(
-                            voc_class_dir / f'{Path(file_name).stem}.png'
-                        )
-                        Image.fromarray(voc_instance).save(
-                            voc_instance_dir / f'{Path(file_name).stem}.png'
-                        )
+                        class_image = Image.fromarray(voc_class)
+                        class_image.putpalette(self._voc_class_palette(categories, label_rows))
+                        class_image.save(voc_class_dir / f'{Path(file_name).stem}.png')
+                        instance_image = Image.fromarray(voc_instance)
+                        instance_image.putpalette(self._voc_instance_palette())
+                        instance_image.save(voc_instance_dir / f'{Path(file_name).stem}.png')
                     image_id += 1
 
             report(90, 'Writing annotation files')
@@ -603,10 +590,9 @@ class ExportService:
         if fmt == 'voc':
             sets = work / 'ImageSets' / 'Segmentation'
             sets.mkdir(parents=True)
-            (sets / 'default.txt').write_text(
-                '\n'.join(voc_list) + ('\n' if voc_list else ''),
-                encoding='utf-8',
-            )
+            split_text = '\n'.join(voc_list) + ('\n' if voc_list else '')
+            for split_name in ('default.txt', 'train.txt', 'trainval.txt'):
+                (sets / split_name).write_text(split_text, encoding='utf-8')
             labelmap = ['# name:color_rgb:parts:actions', 'background:0,0,0::']
             seen = set()
             for row in label_rows:
@@ -633,6 +619,27 @@ class ExportService:
             },
         }
         (work / 'project.json').write_text(json.dumps(data, indent=2), encoding='utf-8')
+
+    def _voc_class_palette(self, categories, label_rows):
+        palette = [0] * 768
+        colors = {row['name']: hex_rgb(row['color']) for row in label_rows}
+        for category in categories:
+            offset = int(category['id']) * 3
+            palette[offset:offset + 3] = colors.get(category['name'], (128, 128, 128))
+        return palette
+
+    def _voc_instance_palette(self):
+        palette = [0] * 768
+        for index in range(256):
+            value = index
+            red = green = blue = 0
+            for shift in range(8):
+                red |= ((value >> 0) & 1) << (7 - shift)
+                green |= ((value >> 1) & 1) << (7 - shift)
+                blue |= ((value >> 2) & 1) << (7 - shift)
+                value >>= 3
+            palette[index * 3:index * 3 + 3] = (red, green, blue)
+        return palette
 
 
 export_service = ExportService()
