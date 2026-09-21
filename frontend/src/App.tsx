@@ -1090,6 +1090,7 @@ function Workspace(){
       </main>
       <aside className="right-rail">
         <section className="rail-card tracker-card">
+          <div className="rail-kicker">PROPAGATION</div>
           <div className="tracker-head">
             <span className="tracker-mark" aria-hidden="true">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
@@ -1121,7 +1122,8 @@ function Workspace(){
           </div>}
         </section>
         <section className="rail-card">
-          <div className="section-title compact"><h3>Current mask</h3></div>
+          <div className="rail-kicker">ANNOTATION</div>
+          <div className="section-title compact"><div><h3>Current mask</h3><p>Choose the defect class before saving.</p></div></div>
           <div className="current-class">
             <i style={{background:project.labels.find(label=>label.id===labelId)?.color??'#4e8ef7'}}/>
             <strong>{project.labels.find(label=>label.id===labelId)?.name??'No class'}</strong>
@@ -1143,9 +1145,10 @@ function Workspace(){
           </div>
         </section>
         <section className="rail-card">
+          <div className="rail-kicker">DELIVERY</div>
           <h3>Export project</h3>
-          <button className="primary wide" onClick={()=>setShowExport(true)}>Export…</button>
-          <p className="muted">COCO, YOLO-seg, Pascal VOC, or a native backup. You can merge every project from the dashboard.</p>
+          <p className="muted">Package annotations as COCO, YOLO-seg, Pascal VOC, or a native backup.</p>
+          <button className="rail-export wide" onClick={()=>setShowExport(true)}><span>Prepare export</span><b aria-hidden="true">↗</b></button>
         </section>
       </aside>
     </div>
