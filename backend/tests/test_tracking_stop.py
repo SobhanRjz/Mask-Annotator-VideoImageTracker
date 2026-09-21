@@ -22,6 +22,7 @@ class ColorTests(unittest.TestCase):
 
 class TrackingStopSavesTests(unittest.TestCase):
     def test_cancel_saves_partial_masks(self):
+        sys.modules.setdefault('torch', MagicMock())
         sys.modules.setdefault('sam2', MagicMock())
         sys.modules.setdefault('sam2.sam2_video_predictor', MagicMock())
         from app.services.tracking_service import TrackingService
@@ -80,6 +81,7 @@ class TrackingStopSavesTests(unittest.TestCase):
         service.pool.shutdown(wait=False)
 
     def test_start_tracks_every_seed_annotation(self):
+        sys.modules.setdefault('torch', MagicMock())
         sys.modules.setdefault('sam2', MagicMock())
         sys.modules.setdefault('sam2.sam2_video_predictor', MagicMock())
         from app.services.tracking_service import TrackingService
@@ -126,6 +128,104 @@ class TrackingStopSavesTests(unittest.TestCase):
         self.assertEqual([item['label_id'] for item in saved], [4, 5])
         self.assertEqual(snap['created_annotations'], [201, 202])
         self.assertEqual(len(seen['removed']), 2)
+        service.pool.shutdown(wait=False)
+
+    def test_image_start_uses_album_indices_not_frame_count(self):
+        sys.modules.setdefault('torch', MagicMock())
+        sys.modules.setdefault('sam2', MagicMock())
+        sys.modules.setdefault('sam2.sam2_video_predictor', MagicMock())
+        from app.services.tracking_service import TrackingService
+
+        stills = [
+            {'id': 10, 'kind': 'image', 'frame_count': 1},
+            {'id': 11, 'kind': 'image', 'frame_count': 1},
+            {'id': 12, 'kind': 'image', 'frame_count': 1},
+        ]
+        seen = {}
+
+        class FakeMedia:
+            def get(self, mid):
+                return {'id': mid, 'kind': 'image', 'project_id': 7, 'frame_count': 1}
+
+            def project_stills(self, pid):
+                seen['pid'] = pid
+                return stills
+
+        service = TrackingService()
+        with patch('app.services.tracking_service.media_service', FakeMedia()), patch(
+            'app.services.tracking_service.sam2_runtime', MagicMock()
+        ), patch('app.services.tracking_service.annotation_service', MagicMock()):
+            job = service.start(10, [9], 0, 2, 1, True)
+            self.assertEqual(job['start_frame'], 0)
+            self.assertEqual(job['end_frame'], 2)
+            with self.assertRaises(ValueError) as same:
+                service.start(10, [9], 1, 1, 1, True)
+            self.assertIn('differ', str(same.exception))
+            with self.assertRaises(ValueError) as span:
+                service.start(10, [9], 0, 9, 1, True)
+            self.assertIn('range', str(span.exception))
+            with self.assertRaises(ValueError) as seed:
+                service.start(11, [9], 0, 2, 1, True)
+            self.assertIn('seed', str(seed.exception).lower())
+        self.assertEqual(seen['pid'], 7)
+        service.pool.shutdown(wait=False)
+
+    def test_image_track_saves_masks_onto_each_still(self):
+        sys.modules.setdefault('torch', MagicMock())
+        sys.modules.setdefault('sam2', MagicMock())
+        sys.modules.setdefault('sam2.sam2_video_predictor', MagicMock())
+        from app.services.tracking_service import TrackingService
+
+        stills = [
+            {'id': 10, 'kind': 'image', 'frame_count': 1},
+            {'id': 11, 'kind': 'image', 'frame_count': 1},
+            {'id': 12, 'kind': 'image', 'frame_count': 1},
+        ]
+        saved = []
+        removed = []
+
+        class FakeMedia:
+            def get(self, mid):
+                return {'id': mid, 'kind': 'image', 'project_id': 7, 'frame_count': 1}
+
+            def project_stills(self, _pid):
+                return stills
+
+        class FakeRuntime:
+            def track(self, _mid, aids, start, end, step, progress, cancel):
+                progress(end, 90)
+                return [(aids[0], 4, {1: object(), 2: object()})]
+
+        class FakeAnnotations:
+            def delete_auto_range(self, mid, lid, a, b, exclude_id=None, exclude_ids=None):
+                removed.append((mid, lid, a, b, exclude_ids or ([exclude_id] if exclude_id is not None else [])))
+                return 1
+
+            def bulk_save(self, mid, lid, masks, _source, group):
+                saved.append({'media_id': mid, 'label_id': lid, 'frames': dict(masks), 'group': group})
+                return [300 + len(saved)]
+
+        service = TrackingService()
+        with patch('app.services.tracking_service.media_service', FakeMedia()), patch(
+            'app.services.tracking_service.sam2_runtime', FakeRuntime()
+        ), patch('app.services.tracking_service.annotation_service', FakeAnnotations()):
+            job = service.start(10, [9], 0, 2, 1, True)
+            deadline = time.time() + 3
+            snap = service.get(job['id'])
+            while snap['status'] in ('queued', 'running'):
+                if time.time() > deadline:
+                    self.fail(f'stuck in {snap}')
+                time.sleep(0.02)
+                snap = service.get(job['id'])
+
+        self.assertEqual(snap['status'], 'completed')
+        self.assertEqual([item['media_id'] for item in saved], [11, 12])
+        self.assertEqual([list(item['frames']) for item in saved], [[0], [0]])
+        self.assertEqual(snap['created_annotations'], [301, 302])
+        self.assertEqual(
+            [(mid, a, b, ids) for mid, _lid, a, b, ids in removed],
+            [(10, 0, 0, [9]), (11, 0, 0, [9]), (12, 0, 0, [9])],
+        )
         service.pool.shutdown(wait=False)
 
 
