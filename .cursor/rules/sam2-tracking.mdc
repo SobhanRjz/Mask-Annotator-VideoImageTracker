@@ -9,7 +9,8 @@ Canonical code: `backend/app/services/sam2_runtime.py`, `tracking_service.py`, `
 
 - CUDA is required. Interactive and track calls share `Sam2Runtime.lock`. Tracking uses `ThreadPoolExecutor(max_workers=1)`. Do not run parallel GPU jobs.
 - Prompt sessions are a one-frame temp JPEG dir + `init_state(..., offload_video_to_cpu=True, offload_state_to_cpu=True)`. Predict returns overlay PNG (`overlay_png`).
-- Tracking extracts every frame in `[min(start,end), max(start,end)]` but **persists** only stride hits plus the end frame. Seed frame is not duplicated in results.
+- Tracking extracts every frame in `[min(start,end), max(start,end)]` in patches of `track_patch_size` (default 16) but **persists** only stride hits plus the end frame. Seed frame is not duplicated in results. Consecutive patches share the boundary frame so the last mask seeds the next window.
+- For `kind=image`, `start`/`end` are album indices (project stills ordered by id). The seed must be on the From still at frame 0. Results are saved onto each still at frame 0. Mixed-size stills are resized to the seed still for SAM2, then masks are resized back on save.
 - `replace_auto_masks` deletes `source='auto'` in range for that label. `bulk_save` skips frames that already have a non-auto annotation.
 - Saving from the UI (including edits of tracked masks) is `source='manual'` so later tracks keep that keyframe.
 - Empty masks must raise. Masks resize to media `height × width` with nearest neighbor before write.
