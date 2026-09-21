@@ -18,4 +18,4 @@ app.include_router(router)
 @app.get('/health')
 def health():
     sam2=sam2_runtime.status()
-    return {'status':'ok','model':settings.model_id,'sam2_ready':sam2['ready'],'sam2_loading':sam2['loading'],'sam2_error':sam2['error']}
+    return {'status':'ok','model':sam2.get('model') or settings.model_id,'sam2_ready':sam2['ready'],'sam2_loading':sam2['loading'],'sam2_error':sam2['error']}
