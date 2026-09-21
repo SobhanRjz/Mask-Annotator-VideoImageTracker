@@ -61,6 +61,16 @@ export function trackButtonLabel(seedCount:number){
   return seedCount>1?`Track ${seedCount} masks`:'Track from this mask';
 }
 
+export function trackSeedsMatchFrom(
+  kind:string,
+  seeds:{media_id:number;frame:number}[],
+  fromIndex:number,
+  fromMediaId:number|undefined,
+){
+  if(kind==='image')return seeds.every(item=>item.media_id===fromMediaId&&item.frame===0);
+  return seeds.every(item=>item.frame===fromIndex);
+}
+
 export function annotatedFrameCount(frames:{annotation_count:number}[]){
   return frames.reduce((n,item)=>n+(item.annotation_count>0?1:0),0);
 }
@@ -100,4 +110,44 @@ export function panBy(origin:{x:number;y:number},start:{x:number;y:number},now:{
 export function brushBoundsToBox(bounds:{x:number;y:number;w:number;h:number}|null):BoxPrompt|null{
   if(!bounds||bounds.w<3||bounds.h<3)return null;
   return [bounds.x,bounds.y,bounds.x+bounds.w,bounds.y+bounds.h];
+}
+
+export function displayIndex(zeroBased:number){
+  return zeroBased+1;
+}
+
+export function fromDisplayIndex(oneBased:number){
+  if(!Number.isFinite(oneBased))return 0;
+  return Math.max(0,Math.round(oneBased)-1);
+}
+
+export function clampMenuPos(left:number,top:number,wrapW:number,wrapH:number,menuW:number,menuH:number){
+  const maxLeft=Math.max(8,wrapW-menuW-8);
+  const maxTop=Math.max(8,wrapH-menuH-8);
+  return {
+    left:Math.max(8,Math.min(left,maxLeft)),
+    top:Math.max(8,Math.min(top,maxTop)),
+  };
+}
+
+export function acceptedMaskId(staleSelectedId:number|null,savedId:number|null|undefined){
+  return savedId??staleSelectedId;
+}
+
+export function paintOverlayCopy(overlayId:number,focusedId:number|null){
+  return overlayId!==focusedId;
+}
+
+export function clickOutsideUnfocuses(tool:ToolMode){
+  return tool!=='erase';
+}
+
+export const DEFAULT_TRACK_PATCH=16;
+export const MIN_TRACK_PATCH=2;
+export const MAX_TRACK_PATCH=128;
+
+export function parseTrackPatch(value:unknown,fallback=DEFAULT_TRACK_PATCH){
+  const size=typeof value==='number'?value:Number(value);
+  if(!Number.isFinite(size))return fallback;
+  return Math.max(MIN_TRACK_PATCH,Math.min(MAX_TRACK_PATCH,Math.round(size)));
 }

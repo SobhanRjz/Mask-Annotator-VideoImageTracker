@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {annotatedFrameCount,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,escapeUnfocusesMasks,filterFrames,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,panBy,selectDragStartsBox,selectDragStartsMarquee,selectEmptyRelease,toggleSelection,toolAfterGeneratedMask,trackButtonLabel} from './editorWorkflow.ts';
+import {acceptedMaskId,annotatedFrameCount,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,closeSessionAfterPredict,displayIndex,escapeUnfocusesMasks,filterFrames,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,paintOverlayCopy,panBy,parseTrackPatch,selectDragStartsBox,selectDragStartsMarquee,selectEmptyRelease,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom} from './editorWorkflow.ts';
 
 test('a generated mask stays on the same prompt tool',()=>{
   assert.equal(toolAfterGeneratedMask('positive'),'positive');
@@ -68,6 +68,15 @@ test('delete uses the multi-selection, or the focused mask when nothing else is 
   assert.deepEqual(idsToDelete([],null),[]);
 });
 
+test('still seeds must sit on the from picture at frame 0',()=>{
+  const seeds=[{media_id:20,frame:0},{media_id:20,frame:0}];
+  assert.equal(trackSeedsMatchFrom('image',seeds,1,20),true);
+  assert.equal(trackSeedsMatchFrom('image',seeds,1,10),false);
+  assert.equal(trackSeedsMatchFrom('image',[{media_id:20,frame:2}],1,20),false);
+  assert.equal(trackSeedsMatchFrom('video',[{media_id:9,frame:4}],4,9),true);
+  assert.equal(trackSeedsMatchFrom('video',[{media_id:9,frame:0}],4,9),false);
+});
+
 test('track uses the selection, the focused mask, or every mask on the from frame',()=>{
   assert.deepEqual(idsToTrack([4,9],2,[4,9,11]),[4,9]);
   assert.deepEqual(idsToTrack([],7,[7,11]),[7]);
@@ -131,4 +140,43 @@ test('hand tool pans by the pointer delta from the drag origin',()=>{
 test('a finished brush stroke becomes the same SAM2 box as the rectangle tool',()=>{
   assert.deepEqual(brushBoundsToBox({x:10,y:20,w:40,h:28}),[10,20,50,48]);
   assert.equal(brushBoundsToBox({x:1,y:1,w:2,h:2}),null);
+});
+
+test('frame lists and jump fields show 1-based numbers',()=>{
+  assert.equal(displayIndex(0),1);
+  assert.equal(displayIndex(9),10);
+  assert.equal(fromDisplayIndex(1),0);
+  assert.equal(fromDisplayIndex(10),9);
+  assert.equal(fromDisplayIndex(0),0);
+});
+
+test('the mask class bar stays inside the canvas wrap while dragging',()=>{
+  assert.deepEqual(clampMenuPos(12,20,400,300,160,44),{left:12,top:20});
+  assert.deepEqual(clampMenuPos(-40,-10,400,300,160,44),{left:8,top:8});
+  assert.deepEqual(clampMenuPos(390,280,400,300,160,44),{left:232,top:248});
+});
+
+test('accepting a new detection uses the saved id even when selected is still null',()=>{
+  assert.equal(acceptedMaskId(null,41),41);
+  assert.equal(acceptedMaskId(7,7),7);
+  assert.equal(acceptedMaskId(7,undefined),7);
+});
+
+test('a focused overlay is not painted again on top of the live mask',()=>{
+  assert.equal(paintOverlayCopy(9,9),false);
+  assert.equal(paintOverlayCopy(9,3),true);
+  assert.equal(paintOverlayCopy(9,null),true);
+});
+
+test('eraser keeps painting the selected mask when the stroke starts outside it',()=>{
+  assert.equal(clickOutsideUnfocuses('erase'),false);
+  assert.equal(clickOutsideUnfocuses('brush'),true);
+  assert.equal(clickOutsideUnfocuses('select'),true);
+});
+
+test('tracking patch size stays in a safe GPU range',()=>{
+  assert.equal(parseTrackPatch(16),16);
+  assert.equal(parseTrackPatch(1),2);
+  assert.equal(parseTrackPatch(400),128);
+  assert.equal(parseTrackPatch('nope'),16);
 });
