@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type {Media} from './types.ts';
 import {filterFrames} from './editorWorkflow.ts';
-import {filterLibrary,firstIncompleteStill,libraryRows,libraryTabCounts,picturesComplete,stepStill,stillFrameRows,stillsOf} from './mediaLibrary.ts';
+import {filterLibrary,firstIncompleteStill,libraryRows,libraryTabCounts,picturesComplete,stepStill,stillFrameRows,stillsOf,trackCursor,trackLastIndex,trackSeedMediaId} from './mediaLibrary.ts';
 
 function media(partial:Partial<Media>&Pick<Media,'id'|'kind'>):Media{
   return {
@@ -100,4 +100,18 @@ test('playlist next and previous clamp and step by 10',()=>{
   assert.equal(stepStill(stills,1,10)?.id,5);
   assert.equal(stepStill(stills,5,-10)?.id,1);
   assert.equal(stepStill(stills,99,1),null);
+});
+
+test('picture tracker uses album indices and the from-still as seed media',()=>{
+  const stills=[
+    media({id:10,kind:'image'}),
+    media({id:20,kind:'image'}),
+    media({id:30,kind:'image'}),
+  ];
+  assert.equal(trackLastIndex('image',stills.length,1),2);
+  assert.equal(trackLastIndex('video',stills.length,8),7);
+  assert.equal(trackCursor('image',1,0),1);
+  assert.equal(trackCursor('video',1,4),4);
+  assert.equal(trackSeedMediaId('image',stills,2,10),30);
+  assert.equal(trackSeedMediaId('video',stills,2,99),99);
 });

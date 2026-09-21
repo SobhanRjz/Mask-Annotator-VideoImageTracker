@@ -72,3 +72,17 @@ export function stepStill(media:Media[],id:number,delta:number){
   const next=Math.max(0,Math.min(stills.length-1,index+delta));
   return stills[next];
 }
+
+export function trackLastIndex(kind:string,stillCount:number,frameCount:number){
+  if(kind==='image')return Math.max(0,stillCount-1);
+  return Math.max(0,frameCount-1);
+}
+
+export function trackCursor(kind:string,stillIndex:number,frame:number){
+  return kind==='image'?Math.max(0,stillIndex):frame;
+}
+
+export function trackSeedMediaId(kind:string,stills:Media[],fromIndex:number,currentMediaId:number){
+  if(kind!=='image')return currentMediaId;
+  return stills[fromIndex]?.id??currentMediaId;
+}
