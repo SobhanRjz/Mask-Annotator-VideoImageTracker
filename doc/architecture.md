@@ -15,7 +15,7 @@ Browser :8092
           FastAPI
           SQLite /data/annotator.db
           uploaded media, mask PNGs, export ZIPs
-          SAM2.1 Hiera Small on CUDA
+          SAM2.1 Hiera (Tiny / Small / Balanced / Large) on CUDA
 ```
 
 `compose.yaml` services:
@@ -54,7 +54,7 @@ annotator/
     app/utils/images.py     mask PNG / overlay helpers
 ```
 
-Live routers (from `app/api/router.py`): `projects`, `media`, `annotations`, `prompts`, `tracking`, `exports`. Plus `GET /health` on the app (not under `/api`).
+Live routers (from `app/api/router.py`): `projects`, `media`, `annotations`, `prompts`, `tracking`, `exports`, `stats`, `settings`. Plus `GET /health` on the app (not under `/api`).
 
 ## Layers
 
@@ -83,6 +83,7 @@ projects 1──* labels
 | `media`            | `kind` is `video` or `image`. Videos stay as original files; frames decode on demand. `annotation_complete` is a manual Done flag (`0`/`1`). Stills stay separate rows; the UI groups them as one Pictures album that is complete only when every still is flagged. |
 | `annotations`      | One binary mask PNG per instance. `source` is `manual` or `auto`. `track_group` groups a tracking run. |
 | `excluded_frames`  | Soft-delete of a frame from UI dataset/export. Source video is never rewritten. |
+| `app_settings`     | Site key/value store. `sam_model` is `tiny` / `small` / `balanced` / `large`. |
 
 Default labels on project create: Root, Crack, Obstacle, Deposits, Deformed, Broken, Joint Displaced, Surface Damage.
 
@@ -111,13 +112,15 @@ Base path `/api`.
 | Annotations | `GET /annotations/media/{mid}`, `POST /annotations/masks`, `DELETE /annotations/{id}` | Mask PNG and thumbnail JPEG endpoints |
 | Prompts | `POST /prompts/sessions`, `POST .../predict`, `DELETE .../{sid}` | SAM2 interactive mask |
 | Tracking | `POST /tracking`, `GET /tracking/{jid}`, `DELETE /tracking/{jid}` | Async job, poll ~700ms from UI |
+| Settings | `GET/POST /settings/model`, `GET /settings/model/jobs/{id}` | SAM 2.1 size catalog, cache flags, switch job with download progress |
+| Settings | `GET/POST /settings/tracking` | Tracker images-per-patch (`track_patch_size`, 2–128, default 16) |
 | Exports | `POST /exports`, `GET /exports/{jid}`, `GET /exports/{jid}/download`, `GET /exports/projects/{pid}/{fmt}` | Job-based ZIP with progress. Formats: `coco`, `yolo`, `voc`, `native` |
 
 `POST /annotations/masks` body: `media_id`, `frame`, `label_id`, `mask_png_data_url`, optional `replace_annotation_id`, `source` (UI always sends `manual`).
 
 ## SAM2
 
-Model: `facebook/sam2.1-hiera-small` via `SAM2VideoPredictor.from_pretrained`. CUDA is required at backend startup.
+Selectable SAM 2.1 Hiera size via Settings (`tiny`, `small`, `balanced`, `large`). Default is Small (`facebook/sam2.1-hiera-small`). The saved key lives in SQLite `app_settings.sam_model` and is loaded with `SAM2VideoPredictor.from_pretrained`. CUDA is required at backend startup. Missing checkpoints download into `HF_HOME` (`sam2-models`); cached files are reused. A switch waits for tracking, then downloads if needed, then swaps under `Sam2Runtime.lock`. Failed loads keep the previous model.
 
 VRAM policy (8 GB class GPUs such as RTX 3070 Ti):
 
@@ -138,17 +141,21 @@ VRAM policy (8 GB class GPUs such as RTX 3070 Ti):
 ### Video tracking
 
 1. UI requires a **saved** seed annotation, a different target frame, and `frame_step` (default 5).
-2. Backend extracts JPEG frames for the inclusive range into a temp dir.
-3. Seed mask is added on the local seed index; `propagate_in_video` runs forward or reverse.
+2. Backend extracts JPEG frames in **patches** (`app_settings.track_patch_size`, default 16, range 2–128) covering the inclusive range. Each patch is its own `init_state` + `propagate_in_video`. The last mask of a patch seeds the next patch. GPU work stays on `Sam2Runtime.lock` and the one-worker pool.
+3. Seed mask is added on the local seed index; `propagate_in_video` runs forward or reverse inside each patch.
 4. Every frame is processed. Only frames matching `abs(f-start) % step == 0`, plus the end frame, are kept (seed itself is skipped in the result set).
 5. If `replace_auto_masks`, auto annotations in that range for the same label are deleted; **manual** frames are never replaced (`bulk_save` skips frames that already have non-auto annotations).
 6. New rows get `source='auto'` and a `track_group` like `sam2-{jobid}`.
 
 Editing a tracked mask and saving it sets `source='manual'`, so later tracks preserve that keyframe.
 
+### Pictures tracking
+
+The Pictures album is a virtual video. `POST /tracking` with an image `media_id` treats `start_frame` / `end_frame` as 0-based still indices in that project (`kind=image` ordered by id). The seed annotation must belong to the From still at frame 0. SAM2 writes temp JPEGs per still in the inclusive range (resized to the seed still’s size) in the same patch windows as video, then `propagate_in_video` runs as for video. Auto masks are saved onto each stride/end still at frame 0. Manual masks on a still are not overwritten. GPU work stays on the same lock and one-worker pool.
+
 ## Frontend
 
-Views are in-memory (`projects` | `project` | `annotate`); there is no client router.
+Views are `dashboard` | `projects` | `project` | `annotate` | `settings` (`react-router-dom`). Settings is site-wide SAM 2.1 size selection with download progress, plus tracker images-per-patch.
 
 - Autosave (default on, 3s) posts only when the mask is dirty.
 - Nearby frame strip requests a window around the current frame (`start = frame-10`, limit 28).
@@ -178,13 +185,13 @@ YOLO polygons come from OpenCV external contours of the binary mask. COCO uses C
 
 `backend/app/core/settings.py` (`pydantic-settings`, extra env ignored):
 
-- `model_id` default `facebook/sam2.1-hiera-small`
+- `model_id` default `facebook/sam2.1-hiera-small` (first-boot fallback if `app_settings.sam_model` is unset)
 - `data_root` default `/data`
 - `frontend_origin` default `http://localhost:8092`
 - `default_tracking_step` `5`
 - `jpeg_quality` `92`
 
-Compose also sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and `HF_HOME`.
+Site Settings (`GET/POST /api/settings/model`) persist `sam_model` as `tiny` | `small` | `balanced` | `large`. Weights cache in `HF_HOME`. `GET/POST /api/settings/tracking` persist `track_patch_size` (images per SAM2 window, default 16). Compose also sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and `HF_HOME`.
 
 ## Leftover CVAT-era code
 
