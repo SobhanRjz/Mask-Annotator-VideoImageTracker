@@ -12,10 +12,11 @@ import {NameDialog} from './components/NameDialog';
 import {NoticeDialog} from './components/NoticeDialog';
 import {DoneCheck,ProjectWorkspace} from './components/ProjectWorkspace';
 import {ProjectsPage} from './components/ProjectsPage';
+import {SettingsPage} from './components/SettingsPage';
 import {TimeChip} from './components/TimeChip';
 import {mediaReady,type Annotation,type BoxPrompt,type FrameInfo,type Label,type Media,type Project,type ProjectSummary,type PromptPoint,type ToolMode,type TrackingJob} from './types';
-import {annotatedFrameCount,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,filterFrames,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,type FrameStatusFilter} from './editorWorkflow';
-import {picturesComplete,stepStill,stillFrameRows,stillIndex,stillsOf} from './mediaLibrary';
+import {annotatedFrameCount,acceptedMaskId,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,displayIndex,filterFrames,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom,type FrameStatusFilter} from './editorWorkflow';
+import {picturesComplete,stepStill,stillFrameRows,stillIndex,stillsOf,trackCursor,trackLastIndex,trackSeedMediaId} from './mediaLibrary';
 import {ensureUniqueColor,uniqueColor} from './labelColor';
 import {projectHref} from './projectSlug';
 import {reusedMediaNotice,reusedMediaStatus} from './uploadStatus';
@@ -33,6 +34,7 @@ export default function App(){
             <Route path="media/:mediaId" element={<></>}/>
           </Route>
         </Route>
+        <Route path="settings" element={<></>}/>
       </Route>
       <Route path="*" element={<Navigate to="/" replace/>}/>
     </Routes>
@@ -60,6 +62,7 @@ function Workspace(){
   const [box,setBox]=useState<BoxPrompt|null>(null);
   const [promptId,setPromptId]=useState<string|null>(null);
   const promptIdRef=useRef<string|null>(null);
+  const saveInFlight=useRef<Promise<Annotation|null>|null>(null);
   const [promptBusy,setPromptBusy]=useState(false);
   const [dirty,setDirty]=useState(false);
   const [autoSave,setAutoSave]=useState(loadSetting('autosave','true')==='true');
@@ -103,11 +106,13 @@ function Workspace(){
   const annIdsRef=useRef<number[]>([]);
   const promptGen=useRef(0);
 
-  const view=mediaId!=null?(media?'annotate':'loading'):projectSlug?(project?'project':'loading'):location.pathname.startsWith('/projects')?'projects':'dashboard';
+  const view=mediaId!=null?(media?'annotate':'loading'):projectSlug?(project?'project':'loading'):location.pathname.startsWith('/projects')?'projects':location.pathname.startsWith('/settings')?'settings':'dashboard';
   const lastFrame=Math.max(0,(media?.frame_count??1)-1);
   const stills=useMemo(()=>stillsOf(project?.media??[]),[project?.media]);
   const stillPos=media?stillIndex(stills,media.id):-1;
   const isStill=media?.kind==='image';
+  const lastTrack=trackLastIndex(media?.kind??'video',stills.length,media?.frame_count??1);
+  const trackPos=trackCursor(media?.kind??'video',stillPos,frame);
   const stillsDone=picturesComplete(stills);
   const trackSeedIds=idsToTrack(selectedIds,selected?.id??null,frameAnns.map(item=>item.id));
   const stillRows=useMemo(()=>stillFrameRows(stills,stillFrames),[stills,stillFrames]);
@@ -282,8 +287,15 @@ function Workspace(){
     const safe=Math.max(0,Math.min(startFrame,Math.max(0,item.frame_count-1)));
     setMedia(item);
     setFrame(safe);
-    setTrackFrom(safe);
-    setTarget(Math.max(0,item.frame_count-1));
+    if(item.kind==='image'){
+      const album=stillsOf(project?.media??[]);
+      const pos=Math.max(0,stillIndex(album,item.id));
+      setTrackFrom(pos);
+      setTarget(Math.max(0,album.length-1));
+    }else{
+      setTrackFrom(safe);
+      setTarget(Math.max(0,item.frame_count-1));
+    }
     resetEditor();
     setTimeout(()=>refreshWorkspace(item.id,safe).catch(e=>setError(String(e))),0);
   };
@@ -316,6 +328,12 @@ function Workspace(){
     setFrame(n);
     setTrackFrom(n);
     resetEditor();
+  };
+
+  const gotoStillAt=(index:number)=>{
+    if(!project||!media||media.kind!=='image')return;
+    const next=stills[Math.max(0,Math.min(index,Math.max(0,stills.length-1)))];
+    if(next&&next.id!==media.id)navigate(projectHref(project,`/media/${next.id}`));
   };
 
   const gotoStill=(delta:number)=>{
@@ -413,8 +431,11 @@ function Workspace(){
   };
 
   const finishMask=async()=>{
-    if(dirty)await saveCurrent(true);
-    const id=selected?.id;
+    let id=selected?.id??null;
+    if(dirty){
+      const ann=await saveCurrent(true);
+      id=acceptedMaskId(id,ann?.id);
+    }
     if(id==null){
       await unfocusMask();
       return;
@@ -475,17 +496,24 @@ function Workspace(){
   };
 
   const saveCurrent=async(silent=false,replaceId?:number|null)=>{
-    if(!media||!labelId)return;
-    const data=canvas.current?.exportMaskDataUrl();
-    if(!data){if(!silent)setError('No mask to save');return}
-    setSaveState('Saving…');
-    try{
-      const ann=await api.saveMask({mediaId:media.id,frame,labelId,maskDataUrl:data,replaceId:replaceId===undefined?selected?.id:replaceId,source:'manual'});
-      setSelected(ann);setSelectedIds([ann.id]);setDirty(false);setSaveState(`Saved ${new Date().toLocaleTimeString()}`);
-      annIdsRef.current=[...new Set([...annIdsRef.current,ann.id])];
-      await refreshWorkspace(media.id,frame);
-      if(!silent)setStatus('Annotation saved');
-    }catch(e){setSaveState('Save failed');if(!silent)setError(String(e))}
+    if(saveInFlight.current)return saveInFlight.current;
+    const run=(async()=>{
+      if(!media||!labelId)return null;
+      const data=canvas.current?.exportMaskDataUrl();
+      if(!data){if(!silent)setError('No mask to save');return null}
+      setSaveState('Saving…');
+      try{
+        const ann=await api.saveMask({mediaId:media.id,frame,labelId,maskDataUrl:data,replaceId:replaceId===undefined?selected?.id:replaceId,source:'manual'});
+        setSelected(ann);setSelectedIds([ann.id]);setDirty(false);setSaveState(`Saved ${new Date().toLocaleTimeString()}`);
+        annIdsRef.current=[...new Set([...annIdsRef.current,ann.id])];
+        await refreshWorkspace(media.id,frame);
+        if(!silent)setStatus('Annotation saved');
+        return ann;
+      }catch(e){setSaveState('Save failed');if(!silent)setError(String(e));return null}
+    })();
+    saveInFlight.current=run;
+    try{return await run}
+    finally{saveInFlight.current=null}
   };
 
   useEffect(()=>{
@@ -557,25 +585,27 @@ function Workspace(){
 
   const startTrack=async()=>{
     if(!media){setError('Save or select a seed annotation first');return}
-    if(media.kind==='image')return;
-    const from=Math.max(0,Math.min(trackFrom,lastFrame));
-    const to=Math.max(0,Math.min(target,lastFrame));
-    if(from===to){setError('To frame must differ from From frame');return}
+    const from=Math.max(0,Math.min(trackFrom,lastTrack));
+    const to=Math.max(0,Math.min(target,lastTrack));
+    if(from===to){setError(isStill?'To picture must differ from From picture':'To frame must differ from From frame');return}
+    const seedMediaId=trackSeedMediaId(media.kind,stills,from,media.id);
+    const seedFrame=isStill?0:from;
     const chosen=idsToTrack(selectedIds,selected?.id??null,[]);
     let frameIds=frameAnns.map(item=>item.id);
-    if(!chosen.length&&from!==frame){
-      try{frameIds=(await api.listAnnotations(media.id,from)).map(item=>item.id)}
+    if(!chosen.length&&from!==trackPos){
+      try{frameIds=(await api.listAnnotations(seedMediaId,seedFrame)).map(item=>item.id)}
       catch(e){setError(String(e));return}
     }
     const seedIds=idsToTrack(selectedIds,selected?.id??null,frameIds);
     if(!seedIds.length){setError('Save or select a seed annotation first');return}
     const seedAnns=seedIds.map(id=>frameAnns.find(item=>item.id===id)||(selected?.id===id?selected:null)).filter((item):item is Annotation=>item!=null);
-    if(seedAnns.some(item=>item.frame!==from)){setError('From frame must match the saved seed mask');return}
+    if(seedAnns.length&&!trackSeedsMatchFrom(media.kind,seedAnns,from,seedMediaId)){setError(isStill?'From picture must match the saved seed mask':'From frame must match the saved seed mask');return}
     try{
-      const job=await api.startTracking({mediaId:media.id,annotationIds:seedIds,startFrame:from,endFrame:to,frameStep:trackStep,replace:replaceAuto});
+      const job=await api.startTracking({mediaId:seedMediaId,annotationIds:seedIds,startFrame:from,endFrame:to,frameStep:trackStep,replace:replaceAuto});
       setTrackJob(job);
       const n=seedIds.length;
-      setStatus(n>1?`Tracking ${n} masks from ${from} to ${to}, saving every ${trackStep} frame${trackStep===1?'':'s'}…`:`Tracking from ${from} to ${to}, saving every ${trackStep} frame${trackStep===1?'':'s'}…`);
+      const unit=isStill?'picture':'frame';
+      setStatus(n>1?`Tracking ${n} masks from ${displayIndex(from)} to ${displayIndex(to)}, saving every ${trackStep} ${unit}${trackStep===1?'':'s'}…`:`Tracking from ${displayIndex(from)} to ${displayIndex(to)}, saving every ${trackStep} ${unit}${trackStep===1?'':'s'}…`);
     }catch(e){setError(String(e))}
   };
 
@@ -879,6 +909,12 @@ function Workspace(){
     {dialogs}
   </div>;
 
+  if(view==='settings')return <div className="page-shell product-shell">
+    <AppNav onExport={()=>setShowExport(true)} exportDisabled={boot!=='ready'||!projects.length}/>
+    <SettingsPage/>
+    {dialogs}
+  </div>;
+
   if(view==='projects')return <div className="page-shell product-shell">
     <AppNav onExport={()=>setShowExport(true)} exportDisabled={boot!=='ready'||!projects.length}/>
     <ProjectsPage projects={projects} boot={boot} busy={busy} onCreate={()=>setShowProjectForm(true)} onImport={importBackup} onOpen={item=>navigate(projectHref(item))} onDelete={requestDeleteProject}/>
@@ -1013,46 +1049,47 @@ function Workspace(){
           <AnnotationCanvas ref={canvas} imageUrl={api.frameUrl(media.id,frame)} points={points} box={box} tool={tool} brushSize={brushSize} zoom={zoom} disabled={promptBusy} overlays={overlays} focusedId={selected?.id??null} selectedIds={selectedIds} finished={selected!=null&&finishedIds.includes(selected.id)} finishedIds={finishedIds} labels={project.labels} labelId={labelId} showLabelMenu={dirty||!!selected} onPoint={addPoint} onBox={setPromptBox} onDirty={()=>{if(tool==='brush'&&!selected)return;setDirty(true);setSaveState('Unsaved changes')}} onBeforeEdit={pushHistory} onBrushStroke={()=>{void finishBrushDetect()}} onSelect={(id,additive)=>{void pickMask(id,additive)}} onSelectIds={(ids,additive)=>{void pickMasks(ids,additive)}} onUnfocus={()=>{void unfocusMask()}} onLabelId={changeClass} onFinish={()=>{void finishMask()}}/>
         </div>
         <div className="editor-footer">
-          {isStill
-            ? <div className="editor-chrome stills-chrome">
-                <div className="frame-nav">
-                  <button onClick={()=>gotoStill(-10)} disabled={stillPos<=0} title="Previous 10 · Shift+←">‹‹</button>
-                  <button onClick={()=>gotoStill(-1)} disabled={stillPos<=0} title="Previous · ←">‹</button>
+          <div className={`editor-chrome${isStill?' stills-chrome':''}`}>
+            <div className="transport">
+              <button type="button" onClick={()=>isStill?gotoStill(-10):void gotoFrame(frame-10)} disabled={isStill?stillPos<=0:frame<=0} title={isStill?'Previous 10 · Shift+←':'Previous 10 · Shift+←'} aria-label="Jump back 10">‹‹</button>
+              <button type="button" className="transport-step" onClick={()=>isStill?gotoStill(-1):void gotoFrame(frame-1)} disabled={isStill?stillPos<=0:frame<=0} title={isStill?'Previous · ←':'Previous · ←'} aria-label="Previous">‹</button>
+            </div>
+            {isStill
+              ? <div className="timeline" style={{'--timeline-progress':`${stills.length>1?stillPos/Math.max(1,stills.length-1)*100:0}%`} as CSSProperties}>
+                  <div className="timeline-track">
+                    {stillRows.filter(item=>item.annotation_count>0).map(item=>(
+                      <i key={item.mediaId} className={`timeline-mark${item.mediaId===media.id?' current':''}`} style={{left:`${stills.length>1?item.index/Math.max(1,stills.length-1)*100:0}%`}} title={`Picture ${displayIndex(item.index)}`}/>
+                    ))}
+                    <input type="range" min={1} max={Math.max(1,stills.length)} value={displayIndex(Math.max(0,stillPos))} onChange={e=>gotoStillAt(fromDisplayIndex(Number(e.target.value)))} aria-label="Pictures"/>
+                  </div>
                 </div>
-                <span className="timeline-time">{stillPos+1} / {stills.length}</span>
-                <div className="frame-nav">
-                  <button onClick={()=>gotoStill(1)} disabled={stillPos>=stills.length-1} title="Next · →">›</button>
-                  <button onClick={()=>gotoStill(10)} disabled={stillPos>=stills.length-1} title="Next 10 · Shift+→">››</button>
-                </div>
-              </div>
-            : <div className="editor-chrome">
-            <div className="frame-nav">
-              <button onClick={()=>gotoFrame(frame-10)} disabled={frame<=0} title="Previous 10 · Shift+←">‹‹</button>
-              <button onClick={()=>gotoFrame(frame-1)} disabled={frame<=0} title="Previous · ←">‹</button>
+              : <div className="timeline" style={{'--timeline-progress':`${lastFrame?frame/lastFrame*100:0}%`} as CSSProperties}>
+                  <div className="timeline-track">
+                    {frames.filter(item=>item.annotation_count>0).map(item=>(
+                      <i key={item.frame} className={`timeline-mark${item.frame===frame?' current':''}`} style={{left:`${lastFrame?item.frame/lastFrame*100:0}%`}} title={`Frame ${displayIndex(item.frame)}`}/>
+                    ))}
+                    <input type="range" min={0} max={lastFrame} value={frame} onChange={e=>gotoFrame(Number(e.target.value))} aria-label="Timeline"/>
+                  </div>
+                </div>}
+            <div className="transport">
+              <button type="button" className="transport-step" onClick={()=>isStill?gotoStill(1):void gotoFrame(frame+1)} disabled={isStill?stillPos>=stills.length-1:frame>=lastFrame} title="Next · →" aria-label="Next">›</button>
+              <button type="button" onClick={()=>isStill?gotoStill(10):void gotoFrame(frame+10)} disabled={isStill?stillPos>=stills.length-1:frame>=lastFrame} title="Next 10 · Shift+→" aria-label="Jump forward 10">››</button>
             </div>
-            <div className="timeline" style={{'--timeline-progress':`${lastFrame?frame/lastFrame*100:0}%`} as CSSProperties}>
-              <div className="timeline-track">
-                {frames.filter(item=>item.annotation_count>0).map(item=>(
-                  <i key={item.frame} className={`timeline-mark${item.frame===frame?' current':''}`} style={{left:`${lastFrame?item.frame/lastFrame*100:0}%`}} title={`Frame ${item.frame}`}/>
-                ))}
-                <input type="range" min={0} max={lastFrame} value={frame} onChange={e=>gotoFrame(Number(e.target.value))} aria-label="Timeline"/>
-              </div>
-            </div>
-            <div className="frame-nav">
-              <button onClick={()=>gotoFrame(frame+1)} disabled={frame>=lastFrame} title="Next · →">›</button>
-              <button onClick={()=>gotoFrame(frame+10)} disabled={frame>=lastFrame} title="Next 10 · Shift+→">››</button>
-            </div>
-            <label className="frame-jump">
-              <span>Frame</span>
-              <input type="number" value={frame} min={0} max={lastFrame} onChange={e=>setFrame(Number(e.target.value))} onKeyDown={e=>{if(e.key==='Enter')gotoFrame(frame)}}/>
-              <span className="frame-total">/ {lastFrame}</span>
-            </label>
-            <span className="timeline-time">{media.fps?`${(frame/media.fps).toFixed(2)}s`:`${frame}`}</span>
-          </div>}
+            {isStill
+              ? <span className="chrome-count">{displayIndex(Math.max(0,stillPos))}<small>/</small>{stills.length}</span>
+              : <>
+                  <label className="frame-jump">
+                    <span>Frame</span>
+                    <input type="number" value={displayIndex(frame)} min={1} max={displayIndex(lastFrame)} onChange={e=>setFrame(fromDisplayIndex(Number(e.target.value)))} onKeyDown={e=>{if(e.key==='Enter')gotoFrame(frame)}}/>
+                    <span className="frame-total">/ {displayIndex(lastFrame)}</span>
+                  </label>
+                  <span className="timeline-time">{media.fps?`${(frame/media.fps).toFixed(2)}s`:`${displayIndex(frame)}`}</span>
+                </>}
+          </div>
         </div>
       </main>
       <aside className="right-rail">
-        {!isStill&&<section className="rail-card tracker-card">
+        <section className="rail-card tracker-card">
           <div className="tracker-head">
             <span className="tracker-mark" aria-hidden="true">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
@@ -1063,26 +1100,26 @@ function Workspace(){
             </span>
             <div>
               <h3>SAM2 tracker</h3>
-              <p>Follow selected masks through the video</p>
+              <p>{isStill?'Follow selected masks through the pictures':'Follow selected masks through the video'}</p>
             </div>
           </div>
           <div className="track-fields two">
-            <label>From<input type="number" min={0} max={lastFrame} value={trackFrom} onChange={e=>setTrackFrom(Number(e.target.value))} onKeyDown={e=>{if(e.key==='Enter')gotoFrame(trackFrom)}}/></label>
-            <label>To<input type="number" min={0} max={lastFrame} value={target} onChange={e=>setTarget(Number(e.target.value))}/></label>
+            <label>From<input type="number" min={1} max={displayIndex(lastTrack)} value={displayIndex(trackFrom)} onChange={e=>setTrackFrom(fromDisplayIndex(Number(e.target.value)))} onKeyDown={e=>{if(e.key==='Enter'){if(isStill)gotoStillAt(trackFrom);else gotoFrame(trackFrom)}}}/></label>
+            <label>To<input type="number" min={1} max={displayIndex(lastTrack)} value={displayIndex(target)} onChange={e=>setTarget(fromDisplayIndex(Number(e.target.value)))}/></label>
           </div>
           <div className="tracker-meta">
             <label className="track-step">Save every<input type="number" min={1} max={60} value={trackStep} onChange={e=>setTrackStep(Math.max(1,Number(e.target.value)))}/></label>
             <label className="switch-row"><input type="checkbox" checked={replaceAuto} onChange={e=>setReplaceAuto(e.target.checked)}/><span>Replace auto</span></label>
           </div>
-          <button className="primary wide" onClick={startTrack} disabled={trackJob?.status==='running'||(Math.max(0,Math.min(trackFrom,lastFrame))===frame&&!trackSeedIds.length)}>{trackButtonLabel(trackSeedIds.length)}</button>
+          <button className="primary wide" onClick={startTrack} disabled={trackJob?.status==='running'||(Math.max(0,Math.min(trackFrom,lastTrack))===trackPos&&!trackSeedIds.length)}>{trackButtonLabel(trackSeedIds.length)}</button>
           {trackJob&&<div className="job">
             <div><strong>{trackJob.status==='cancelled'?'stopped':trackJob.status}</strong><span>{trackJob.progress}%</span></div>
             <div className="progress"><i style={{width:`${trackJob.progress}%`}}/></div>
-            <small>Frame {trackJob.current_frame??'–'} · saved {trackJob.created_annotations.length}</small>
+            <small>{isStill?'Picture':'Frame'} {trackJob.current_frame==null?'–':displayIndex(trackJob.current_frame)} · saved {trackJob.created_annotations.length}</small>
             {trackJob.status==='running'&&<button className="danger wide" onClick={stopTrack}>Stop and save</button>}
             {trackJob.error&&<p className="error-inline">{trackJob.error}</p>}
           </div>}
-        </section>}
+        </section>
         <section className="rail-card">
           <div className="section-title compact"><h3>Current mask</h3></div>
           <div className="current-class">
@@ -1252,7 +1289,7 @@ function FrameThumb(props:{
     <button type="button" className="frame-open" onClick={props.onOpen}>
       {show?<img src={api.frameUrl(props.mediaId,props.item.frame,180)} alt=""/>:<span className="frame-ph"/>}
     </button>
-    <span className="frame-index">{props.indexLabel??props.item.frame}</span>
+    <span className="frame-index">{displayIndex(props.indexLabel??props.item.frame)}</span>
     {props.item.excluded
       ? <button type="button" className="thumb-action restore" title="Restore frame" onClick={props.onRestore}>↩</button>
       : <button type="button" className="thumb-action delete" title="Exclude frame. Shift-click also deletes annotations." onClick={e=>{e.stopPropagation();props.onExclude(e.shiftKey)}}><TrashIcon/></button>}
