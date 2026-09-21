@@ -37,12 +37,13 @@ export function ProjectWorkspace(props:{
   const rows=useMemo(()=>libraryRows(project.media),[project.media]);
   const counts=libraryTabCounts(rows);
   const visible=filterLibrary(rows,tab);
+  const completion=rows.length?Math.round((counts.completed/rows.length)*100):0;
 
   return <main className="workspace">
       <section className="workspace-hero">
         {cover&&<img className="workspace-cover" src={api.frameUrl(cover.id,0,960)} alt=""/>}
         <div className="workspace-hero-copy">
-          <div className="eyebrow">PROJECT</div>
+          <div className="eyebrow">ACTIVE INSPECTION</div>
           <h1>{project.name}</h1>
           <p>{project.description||'Upload CCTV, extract a frame set, then annotate defects with SAM2.'}</p>
           <code className="workspace-slug">/projects/{project.slug||project.id}</code>
@@ -52,6 +53,10 @@ export function ProjectWorkspace(props:{
             <div><span>Extracted frames</span><b>{extracted}</b></div>
             <div><span>Masks</span><b>{project.media.reduce((sum,item)=>sum+(item.annotation_count??0),0)}</b></div>
             <div><span>Time</span><b><TimeChip seconds={project.annotation_seconds??0} compact/></b></div>
+          </div>
+          <div className="workspace-progress">
+            <div><span>Project completion</span><b>{completion}%</b></div>
+            <i aria-hidden="true"><b style={{width:`${completion}%`}}/></i>
           </div>
         </div>
         <div className="workspace-actions">
@@ -67,7 +72,7 @@ export function ProjectWorkspace(props:{
           <div className="section-title">
             <div>
               <h2>Media library</h2>
-              <p>Extract frames from video, then open the annotator. Stills open as one picture set.</p>
+              <p>{rows.length} work item{rows.length===1?'':'s'} · {counts.completed} completed · {counts.not_annotated} waiting</p>
             </div>
             {rows.length>0&&<div className="filter-seg library-tabs" role="group" aria-label="Media status">
               {([['all','All',counts.all],['completed','Completed',counts.completed],['not_annotated','Not annotated',counts.not_annotated]] as const).map(([value,label,count])=>(
@@ -141,7 +146,7 @@ export function ProjectWorkspace(props:{
         </section>
         <aside className="labels-panel workspace-labels">
           <div className="section-title">
-            <div><h2>Defect legend</h2><p>Classes for this inspection only.</p></div>
+            <div><div className="panel-kicker">PROJECT LABELS</div><h2>Defect legend</h2><p>{project.labels.length} classes for this inspection.</p></div>
             <button onClick={props.onAddLabel}>+ Add</button>
           </div>
           <div className="label-list">
