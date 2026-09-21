@@ -355,5 +355,13 @@ class MediaService:
             self.delete(mid)
         return {'ok': True, 'deleted': len(ids)}
 
+    def project_stills(self, project_id):
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT id FROM media WHERE project_id=? AND kind='image' ORDER BY id",
+                (project_id,),
+            ).fetchall()
+            return [self._load(row['id'], conn) for row in rows]
+
 
 media_service = MediaService()

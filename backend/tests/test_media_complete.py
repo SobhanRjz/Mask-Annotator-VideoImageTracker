@@ -118,6 +118,15 @@ class MediaCompleteTests(unittest.TestCase):
             media_service.set_project_images_complete(self.pid, True)
         self.assertIn('No stills', str(caught.exception))
 
+    def test_project_stills_are_images_ordered_by_id(self):
+        from app.services.media_service import media_service
+        self._media('clip.mp4', 'video', 4)
+        first = self._media('a.png', 'image')
+        second = self._media('b.png', 'image')
+        stills = media_service.project_stills(self.pid)
+        self.assertEqual([item['id'] for item in stills], [first, second])
+        self.assertTrue(all(item['kind'] == 'image' for item in stills))
+
 
 if __name__ == '__main__':
     unittest.main()
