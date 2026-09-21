@@ -1,4 +1,4 @@
-import type {Annotation,BoxPrompt,DashboardStats,ExportFormat,ExportJob,FrameInfo,Media,Project,ProjectSummary,PromptPoint,TrackingJob} from '../types';
+import type {Annotation,BoxPrompt,DashboardStats,ExportFormat,ExportJob,FrameInfo,Media,ModelSettings,ModelSwitchJob,Project,ProjectSummary,PromptPoint,TrackingJob,TrackingSettings} from '../types';
 const API='/api';
 async function req<T>(url:string,init?:RequestInit):Promise<T>{const r=await fetch(url,init);if(!r.ok){let m=`${r.status} ${r.statusText}`;try{const b=await r.json();m=b.detail??m}catch{}throw new Error(m)}return r.json() as Promise<T>}
 export const frameUrl=(mid:number,f:number,thumb?:number)=>`${API}/media/${mid}/frame/${f}${thumb?`?thumb=${thumb}`:''}`;
@@ -33,6 +33,11 @@ export async function importProjectBackup(file:File){
   return req<Project>(`${API}/projects/backup`,{method:'POST',body:fd});
 }
 export const getStats=()=>req<DashboardStats>(`${API}/stats`);
+export const getModelSettings=()=>req<ModelSettings>(`${API}/settings/model`);
+export const switchSamModel=(key:string)=>req<ModelSwitchJob>(`${API}/settings/model`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
+export const modelSwitchStatus=(id:string)=>req<ModelSwitchJob>(`${API}/settings/model/jobs/${id}`);
+export const getTrackingSettings=()=>req<TrackingSettings>(`${API}/settings/tracking`);
+export const saveTrackingSettings=(track_patch_size:number)=>req<TrackingSettings>(`${API}/settings/tracking`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_patch_size})});
 export async function uploadMedia(pid:number,files:File[]){const fd=new FormData();files.forEach(f=>fd.append('files',f));return req<Media[]>(`${API}/projects/${pid}/media`,{method:'POST',body:fd})}
 export const extractMedia=(mid:number,framesPerSecond:number)=>req<Media>(`${API}/media/${mid}/extract`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frames_per_second:framesPerSecond})});
 export const addLabel=(pid:number,name:string,color:string)=>req(`${API}/projects/${pid}/labels`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,color})});
