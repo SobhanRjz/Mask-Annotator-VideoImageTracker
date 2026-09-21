@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS media (id INTEGER PRIMARY KEY AUTOINCREMENT,project_i
 CREATE TABLE IF NOT EXISTS annotations (id INTEGER PRIMARY KEY AUTOINCREMENT,media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,frame INTEGER NOT NULL,label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE RESTRICT,mask_path TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'manual',track_group TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE INDEX IF NOT EXISTS idx_ann_media_frame ON annotations(media_id,frame);
 CREATE TABLE IF NOT EXISTS excluded_frames (media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,frame INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(media_id,frame));
+CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 '''
 MEDIA_COLUMNS = (
     ('source_fps', 'REAL'),
@@ -86,13 +87,30 @@ def _migrate_project_slugs(conn: sqlite3.Connection):
 def initialize_db():
     for p in (settings.data_root, settings.media_root, settings.mask_root, settings.export_root):
         p.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(settings.db_path) as conn:
+    conn = sqlite3.connect(settings.db_path)
+    try:
         conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA)
         _migrate(conn)
         conn.commit()
+    finally:
+        conn.close()
 @contextmanager
 def db():
     conn=sqlite3.connect(settings.db_path,timeout=30); conn.row_factory=sqlite3.Row; conn.execute('PRAGMA foreign_keys=ON')
     try: yield conn; conn.commit()
     finally: conn.close()
+
+
+def get_setting(key: str, default: str | None = None):
+    with db() as conn:
+        row = conn.execute('SELECT value FROM app_settings WHERE key=?', (key,)).fetchone()
+        return row['value'] if row else default
+
+
+def set_setting(key: str, value: str):
+    with db() as conn:
+        conn.execute(
+            'INSERT INTO app_settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+            (key, value),
+        )
