@@ -1131,4 +1131,4 @@ button:active:not(:disabled),.button:active,.upload-button:active{transform:tran
 /* Fit annotation media to its viewport while preserving native canvas pixels. */
 .canvas-stage{flex:none}
 .canvas-stage img{width:100%;height:100%}
-.workspace-cover{object-fit:contain;object-position:center;background:#090f16}
+.workspace-cover{object-fit:fill;object-position:center;background:#090f16}
