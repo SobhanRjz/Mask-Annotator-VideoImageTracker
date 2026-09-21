@@ -9,7 +9,7 @@ export function AppNav(props:{
   return (
     <header className="product-nav">
       <NavLink to="/" className="brand">
-        <span className="brand-mark" aria-hidden="true"/>
+        <span className="brand-mark" aria-hidden="true"><i/><i/><i/></span>
         <div>
           <div className="eyebrow">SEWER SAM2</div>
           <strong>Annotator</strong>
