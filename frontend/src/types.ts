@@ -43,6 +43,34 @@ export type PromptPoint={x:number;y:number;positive:boolean};
 export type BoxPrompt=[number,number,number,number];
 export type ToolMode='select'|'positive'|'negative'|'box'|'brush'|'erase'|'pan';
 export type TrackingJob={id:string;media_id:number;annotation_id?:number|null;annotation_ids?:number[];start_frame:number;end_frame:number;frame_step:number;status:string;progress:number;current_frame?:number|null;created_annotations:number[];removed:number;error?:string|null};
+export type TrackingSettings={track_patch_size:number;min:number;max:number;default:number};
+export type SamModelKey='tiny'|'small'|'balanced'|'large';
+export type SamModelOption={
+  key:SamModelKey|string;
+  label:string;
+  model_id:string;
+  filename?:string;
+  note?:string|null;
+  cached:boolean;
+  active:boolean;
+};
+export type ModelSwitchJob={
+  id:string;
+  key:string;
+  status:string;
+  progress:number;
+  message?:string;
+  error?:string|null;
+};
+export type ModelSettings={
+  active:string;
+  model_id:string;
+  ready:boolean;
+  loading:boolean;
+  error?:string|null;
+  models:SamModelOption[];
+  job:ModelSwitchJob|null;
+};
 export type ExportFormat='coco'|'yolo'|'voc'|'native';
 export type ExportJob={
   id:string;
