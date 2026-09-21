@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {acceptedMaskId,annotatedFrameCount,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,closeSessionAfterPredict,displayIndex,escapeUnfocusesMasks,filterFrames,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,paintOverlayCopy,panBy,parseTrackPatch,selectDragStartsBox,selectDragStartsMarquee,selectEmptyRelease,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom} from './editorWorkflow.ts';
+import {acceptedMaskId,annotatedFrameCount,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,closeSessionAfterPredict,displayIndex,escapeUnfocusesMasks,filterFrames,fitScale,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,paintOverlayCopy,panBy,parseTrackPatch,selectDragStartsBox,selectDragStartsMarquee,selectEmptyRelease,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom} from './editorWorkflow.ts';
 
 test('a generated mask stays on the same prompt tool',()=>{
   assert.equal(toolAfterGeneratedMask('positive'),'positive');
   assert.equal(toolAfterGeneratedMask('box'),'box');
   assert.equal(toolAfterGeneratedMask('brush'),'brush');
   assert.equal(toolAfterGeneratedMask('negative'),'negative');
+});
+
+test('large frames fit inside the annotation viewport at 100 percent zoom',()=>{
+  assert.equal(fitScale(1920,1080,1200,700,18),0.60625);
+  assert.equal(fitScale(3840,2160,1200,700,18),0.303125);
+  assert.equal(fitScale(640,480,1200,700,18),1);
 });
 
 test('later clicks keep earlier positive and negative points on the mask',()=>{

@@ -1,7 +1,7 @@
 import {forwardRef,useEffect,useImperativeHandle,useLayoutEffect,useRef,useState} from 'react';
 import type {CSSProperties,PointerEvent as ReactPointerEvent} from 'react';
 import type {BoxPrompt,Label,PromptPoint,ToolMode} from '../types';
-import {brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,paintOverlayCopy,panBy,selectDragStartsMarquee,selectEmptyRelease} from '../editorWorkflow';
+import {brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,fitScale,paintOverlayCopy,panBy,selectDragStartsMarquee,selectEmptyRelease} from '../editorWorkflow';
 import {MASK_FILL_ALPHA,alphaIntersectsBox,maskCentroid,outlineOffsets,overlayFillAlpha,overlayOutlineAlpha,overlayTone,unionMaskAlpha} from '../maskDraw';
 
 export type MaskOverlay={id:number;color:string;url:string;name:string};
@@ -157,6 +157,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
   const overlayImgs=useRef<Record<number,HTMLImageElement>>({});
   const overlayAlpha=useRef<Record<number,Uint8ClampedArray>>({});
   const [size,setSize]=useState({width:1,height:1});
+  const [viewport,setViewport]=useState({width:1,height:1});
   const [pan,setPan]=useState({x:0,y:0});
   const [panning,setPanning]=useState(false);
   const [cursor,setCursor]=useState<{x:number;y:number}|null>(null);
@@ -170,6 +171,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
   const menuRef=useRef<HTMLDivElement|null>(null);
   const dragMenu=useRef<{dx:number;dy:number;w:number;h:number}|null>(null);
   const labelColor=props.labels.find(label=>label.id===props.labelId)?.color??'#FF4848';
+  const displayScale=fitScale(size.width,size.height,viewport.width,viewport.height,18)*props.zoom;
   const labelColorRef=useRef(labelColor);
   labelColorRef.current=labelColor;
 
@@ -273,6 +275,16 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
 
   useEffect(()=>{setDraftBox(null);setMenuOpen(false);setBounds(null);setOverlayLabels([]);setPan({x:0,y:0})},[props.imageUrl]);
 
+  useLayoutEffect(()=>{
+    const wrap=wrapRef.current;
+    if(!wrap)return;
+    const update=()=>setViewport({width:wrap.clientWidth,height:wrap.clientHeight});
+    update();
+    const observer=new ResizeObserver(update);
+    observer.observe(wrap);
+    return()=>observer.disconnect();
+  },[]);
+
   useEffect(()=>{
     const c=canvasRef.current;
     if(!c||c.width<2)return;
@@ -329,7 +341,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
     if(left>wr.width-mw-8)left=Math.max(8,cr.left-wr.left+bounds.x*sx-mw-10);
     const pos=clampMenuPos(left,top,wr.width,wr.height,mw,mh);
     setMenuStyle({position:'absolute',left:pos.left,top:pos.top,zIndex:6});
-  },[bounds,props.zoom,props.imageUrl,size,menuOpen,pinnedMenu,pan,draggingMenu]);
+  },[bounds,displayScale,props.imageUrl,size,menuOpen,pinnedMenu,pan,draggingMenu]);
 
   const toImage=(e:ReactPointerEvent<HTMLCanvasElement>)=>{
     const c=canvasRef.current;
@@ -531,7 +543,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
   };
 
   return <div className="canvas-scroll" ref={wrapRef} onContextMenu={e=>e.preventDefault()}>
-    <div className="canvas-stage" style={{transform:`translate(${pan.x}px, ${pan.y}px) scale(${props.zoom})`}}>
+    <div className="canvas-stage" style={{width:size.width*displayScale,height:size.height*displayScale,transform:`translate(${pan.x}px, ${pan.y}px)`}}>
       {props.imageUrl?<><img ref={imgRef} src={props.imageUrl} draggable={false} alt="annotation frame" onLoad={e=>{
         const im=e.currentTarget;
         setSize({width:im.naturalWidth,height:im.naturalHeight});
@@ -549,7 +561,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
         {cursor&&(props.tool==='brush'||props.tool==='erase')&&<circle cx={cursor.x} cy={cursor.y} r={props.brushSize/2} className="brush-cursor"/>}
       </svg>
       {overlayLabels.map(item=>(
-        <span key={item.id} className={`mask-name-chip${props.finishedIds?.includes(item.id)?' done':''}`} style={{left:item.x,top:item.y,transform:`translate(-50%,-50%) scale(${1/Math.max(.01,props.zoom)})`}}>{item.name}</span>
+        <span key={item.id} className={`mask-name-chip${props.finishedIds?.includes(item.id)?' done':''}`} style={{left:item.x*displayScale,top:item.y*displayScale,transform:'translate(-50%,-50%)'}}>{item.name}</span>
       ))}
       </>:<div className="empty-canvas"><strong>Select a video or image</strong><span>Choose a project, upload media, then start annotation.</span></div>}
     </div>

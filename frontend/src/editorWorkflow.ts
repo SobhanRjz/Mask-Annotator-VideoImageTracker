@@ -121,6 +121,13 @@ export function fromDisplayIndex(oneBased:number){
   return Math.max(0,Math.round(oneBased)-1);
 }
 
+export function fitScale(imageWidth:number,imageHeight:number,viewportWidth:number,viewportHeight:number,padding=0){
+  if(imageWidth<=0||imageHeight<=0||viewportWidth<=0||viewportHeight<=0)return 1;
+  const availableWidth=Math.max(1,viewportWidth-padding*2);
+  const availableHeight=Math.max(1,viewportHeight-padding*2);
+  return Math.min(1,availableWidth/imageWidth,availableHeight/imageHeight);
+}
+
 export function clampMenuPos(left:number,top:number,wrapW:number,wrapH:number,menuW:number,menuH:number){
   const maxLeft=Math.max(8,wrapW-menuW-8);
   const maxTop=Math.max(8,wrapH-menuH-8);

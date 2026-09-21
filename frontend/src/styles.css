@@ -1128,3 +1128,7 @@ button:active:not(:disabled),.button:active,.upload-button:active{transform:tran
   .right-rail{display:block;width:auto}.right-rail section.rail-card{margin-bottom:10px}
 }
 
+/* Fit annotation media to its viewport while preserving native canvas pixels. */
+.canvas-stage{flex:none}
+.canvas-stage img{width:100%;height:100%}
+.workspace-cover{object-fit:contain;object-position:center;background:#090f16}
