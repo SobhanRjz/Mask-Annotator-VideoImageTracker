@@ -1,7 +1,7 @@
 import {useEffect,useState} from 'react';
 import {Link} from 'react-router-dom';
 import * as api from '../api/client';
-import {continueHref,defectShare,defectTotal,heatmapForFilter} from '../dashboardStats';
+import {annotationPace,continueHref,defectShare,defectTotal,heatmapForFilter,remainingFrames} from '../dashboardStats';
 import {coveragePercent} from '../projectSlug';
 import type {DashboardStats} from '../types';
 import {formatSpent} from './TimeChip';
@@ -49,11 +49,17 @@ export function DashboardPage(){
   const maxDefect=Math.max(1,...defectCounts,1);
   const heat=report?heatmapForFilter(report,heatFilter):null;
   const heatOptions=[{name:'all',label:'All defects'},...(report?.defects.map(item=>({name:item.name,label:item.name}))??[])];
+  const remaining=remainingFrames(report?.frames_extracted??0,report?.frames_annotated??0);
+  const pace=annotationPace(report?.frames_annotated??0,report?.seconds_total??0);
 
   return <main className="dashboard">
       <section className="dash-hero">
-        <h1>Annotation overview</h1>
-        <Link className="primary dash-continue" to={continueHref(report?.continue)}>Continue Annotation →</Link>
+        <div>
+          <div className="eyebrow">OPERATIONS OVERVIEW</div>
+          <h1>Annotation command center</h1>
+          <p>Track dataset coverage, defect patterns, and active workload across every inspection.</p>
+        </div>
+        <Link className="primary dash-continue" to={continueHref(report?.continue)}><span>Continue annotation</span><b aria-hidden="true">→</b></Link>
       </section>
 
       {error&&!report&&<div className="empty-state dash-empty">
@@ -63,13 +69,20 @@ export function DashboardPage(){
 
       {report&&<>
         <section className="kpi-grid">
-          <article className="kpi-card">
-            <span>Frames</span>
+          <article className="kpi-card kpi-accent-blue">
+            <div className="kpi-label"><i aria-hidden="true"/><span>Extracted frames</span></div>
             <strong>{formatCount(report.frames_extracted)}</strong>
+            <small>Ready for review</small>
           </article>
-          <article className="kpi-card">
-            <span>Annotated</span>
+          <article className="kpi-card kpi-accent-green">
+            <div className="kpi-label"><i aria-hidden="true"/><span>Annotated frames</span></div>
             <strong>{formatCount(report.frames_annotated)}</strong>
+            <small>{formatCount(remaining)} remaining</small>
+          </article>
+          <article className="kpi-card kpi-accent-amber">
+            <div className="kpi-label"><i aria-hidden="true"/><span>Project portfolio</span></div>
+            <strong>{formatCount(report.project_count)} <em>projects</em></strong>
+            <small>{pace?`${formatCount(pace)} frames / active hour`:'Pace appears after annotation'}</small>
           </article>
           <article className="kpi-card kpi-coverage">
             <div className="coverage-meter" style={{['--coverage' as string]:`${coverage}%`}}>
@@ -77,9 +90,10 @@ export function DashboardPage(){
               <span>Complete</span>
             </div>
             <div className="coverage-copy">
-              <span>Complete</span>
+              <span>Dataset coverage</span>
               <strong>{coverage}%</strong>
               <div className="coverage-bar" aria-hidden="true"><i style={{width:`${coverage}%`}}/></div>
+              <small>{formatCount(remaining)} frames left</small>
             </div>
           </article>
         </section>
@@ -88,8 +102,9 @@ export function DashboardPage(){
           <article className="dash-panel defect-panel">
             <div className="section-title">
               <div>
+                <div className="panel-kicker">CLASSIFICATION</div>
                 <h2>Defect distribution</h2>
-                <p>Saved annotations by class.</p>
+                <p>Saved masks grouped by inspection class.</p>
               </div>
             </div>
             <div className="defect-bars">
@@ -112,6 +127,7 @@ export function DashboardPage(){
           <article className="dash-panel activity-panel">
             <div className="section-title">
               <div>
+                <div className="panel-kicker">PRODUCTIVITY</div>
                 <h2>Annotation activity</h2>
                 <p>Media and time on this dataset.</p>
               </div>
@@ -128,6 +144,7 @@ export function DashboardPage(){
         <section className="dash-panel heatmap-panel">
           <div className="section-title">
             <div>
+              <div className="panel-kicker">SPATIAL ANALYSIS</div>
               <h2>Mask location heatmap</h2>
               <p>Where annotated pixels fall after every frame is scaled to the same pipe canvas.</p>
             </div>
@@ -153,6 +170,7 @@ export function DashboardPage(){
         <section className="dash-panel details-panel">
           <div className="section-title">
             <div>
+              <div className="panel-kicker">MASK PROFILE</div>
               <h2>Dataset details</h2>
               <p>Mask size clusters from {formatCount(report.mask_count)} saved masks.</p>
             </div>
