@@ -1,7 +1,7 @@
 import {forwardRef,useEffect,useImperativeHandle,useLayoutEffect,useRef,useState} from 'react';
 import type {CSSProperties,PointerEvent as ReactPointerEvent} from 'react';
 import type {BoxPrompt,Label,PromptPoint,ToolMode} from '../types';
-import {brushStrokeUsesDetection,panBy,selectDragStartsMarquee,selectEmptyRelease} from '../editorWorkflow';
+import {brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,paintOverlayCopy,panBy,selectDragStartsMarquee,selectEmptyRelease} from '../editorWorkflow';
 import {MASK_FILL_ALPHA,alphaIntersectsBox,maskCentroid,outlineOffsets,overlayFillAlpha,overlayOutlineAlpha,overlayTone,unionMaskAlpha} from '../maskDraw';
 
 export type MaskOverlay={id:number;color:string;url:string;name:string};
@@ -44,6 +44,16 @@ interface Props{
   finishedIds?:number[];
 }
 
+const MENU_POS_KEY='maskLabelBarPos';
+function loadMenuPos(){
+  try{
+    const raw=localStorage.getItem(MENU_POS_KEY);
+    if(!raw)return null;
+    const value=JSON.parse(raw) as {x?:unknown;y?:unknown};
+    if(typeof value.x==='number'&&typeof value.y==='number')return {x:value.x,y:value.y};
+  }catch{}
+  return null;
+}
 const loadImage=(src:string)=>new Promise<HTMLImageElement>((ok,bad)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=()=>bad(new Error('Image load failed'));im.src=src});
 const EMPTY_PNG='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
 
@@ -155,6 +165,10 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
   const [bounds,setBounds]=useState<{x:number;y:number;w:number;h:number}|null>(null);
   const [menuStyle,setMenuStyle]=useState<CSSProperties>({display:'none'});
   const [overlayLabels,setOverlayLabels]=useState<{id:number;name:string;x:number;y:number}[]>([]);
+  const [pinnedMenu,setPinnedMenu]=useState<{x:number;y:number}|null>(loadMenuPos);
+  const [draggingMenu,setDraggingMenu]=useState(false);
+  const menuRef=useRef<HTMLDivElement|null>(null);
+  const dragMenu=useRef<{dx:number;dy:number;w:number;h:number}|null>(null);
   const labelColor=props.labels.find(label=>label.id===props.labelId)?.color??'#FF4848';
   const labelColorRef=useRef(labelColor);
   labelColorRef.current=labelColor;
@@ -171,7 +185,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
       const img=imgs[overlay.id];
       const alpha=alphas[overlay.id];
       if(!img)continue;
-      if(overlay.id!==props.focusedId){
+      if(paintOverlayCopy(overlay.id,props.focusedId)){
         const tone=overlayTone(overlay.id,props.focusedId,props.selectedIds);
         const tmp=document.createElement('canvas');
         tmp.width=layer.width;tmp.height=layer.height;
@@ -293,18 +307,29 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
   },[props.overlays,props.focusedId,props.selectedIds,size.width,size.height]);
 
   useLayoutEffect(()=>{
+    if(draggingMenu)return;
     const wrap=wrapRef.current;
     const canvas=canvasRef.current;
-    if(!wrap||!canvas||!bounds||!props.imageUrl){setMenuStyle({display:'none'});return}
-    const cr=canvas.getBoundingClientRect();
+    const menu=menuRef.current;
+    if(!wrap||!props.imageUrl){setMenuStyle({display:'none'});return}
     const wr=wrap.getBoundingClientRect();
+    const mw=menu?.offsetWidth||188;
+    const mh=menu?.offsetHeight||40;
+    if(pinnedMenu){
+      const pos=clampMenuPos(pinnedMenu.x*wr.width,pinnedMenu.y*wr.height,wr.width,wr.height,mw,mh);
+      setMenuStyle({position:'absolute',left:pos.left,top:pos.top,zIndex:6});
+      return;
+    }
+    if(!canvas||!bounds){setMenuStyle({display:'none'});return}
+    const cr=canvas.getBoundingClientRect();
     const sx=cr.width/Math.max(1,canvas.width);
     const sy=cr.height/Math.max(1,canvas.height);
     let left=cr.left-wr.left+(bounds.x+bounds.w)*sx+10;
     const top=Math.max(8,cr.top-wr.top+bounds.y*sy);
-    if(left>wr.width-188)left=Math.max(8,cr.left-wr.left+bounds.x*sx-178);
-    setMenuStyle({position:'absolute',left,top,zIndex:6});
-  },[bounds,props.zoom,props.imageUrl,size,menuOpen]);
+    if(left>wr.width-mw-8)left=Math.max(8,cr.left-wr.left+bounds.x*sx-mw-10);
+    const pos=clampMenuPos(left,top,wr.width,wr.height,mw,mh);
+    setMenuStyle({position:'absolute',left:pos.left,top:pos.top,zIndex:6});
+  },[bounds,props.zoom,props.imageUrl,size,menuOpen,pinnedMenu,pan,draggingMenu]);
 
   const toImage=(e:ReactPointerEvent<HTMLCanvasElement>)=>{
     const c=canvasRef.current;
@@ -390,7 +415,18 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
     if(e.button!==0)return;
     if(props.tool==='positive'||props.tool==='negative'){props.onPoint({...p,positive:props.tool!=='negative'});return}
     if(props.tool==='box'){boxStart.current=p;setDraftBox([p.x,p.y,p.x,p.y]);e.currentTarget.setPointerCapture(e.pointerId);return}
-    if((props.tool==='brush'||props.tool==='erase')&&props.focusedId!=null&&hitOverlay(p)==null){props.onUnfocus();return}
+    if(props.tool==='erase'&&props.focusedId!=null){
+      const img=overlayImgs.current[props.focusedId];
+      const c=canvasRef.current;
+      const ctx=c?.getContext('2d',{willReadFrequently:true});
+      if(img&&c&&ctx){
+        const data=ctx.getImageData(0,0,c.width,c.height).data;
+        let empty=true;
+        for(let i=3;i<data.length;i+=4){if(data[i]>16){empty=false;break}}
+        if(empty)paintTint(ctx,img,labelColor,MASK_FILL_ALPHA,c.width,c.height);
+      }
+    }
+    if(clickOutsideUnfocuses(props.tool)&&props.focusedId!=null&&hitOverlay(p)==null){props.onUnfocus();return}
     if(!(props.tool==='brush'&&brushStrokeUsesDetection(props.focusedId!=null)==='detect'))props.onBeforeEdit();
     drawing.current=true;last.current=p;e.currentTarget.setPointerCapture(e.pointerId);drawBrush(p,p);props.onDirty();
   };
@@ -440,6 +476,60 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
   const currentLabel=props.labels.find(label=>label.id===props.labelId);
   const hasMask=Boolean(bounds)||Boolean(props.focusedId)||Boolean(props.showLabelMenu);
 
+  const pinMenuAt=(left:number,top:number)=>{
+    const wrap=wrapRef.current;
+    if(!wrap)return;
+    const wr=wrap.getBoundingClientRect();
+    const menu=menuRef.current;
+    const pos=clampMenuPos(left,top,wr.width,wr.height,menu?.offsetWidth||188,menu?.offsetHeight||40);
+    const next={x:pos.left/Math.max(1,wr.width),y:pos.top/Math.max(1,wr.height)};
+    setPinnedMenu(next);
+    localStorage.setItem(MENU_POS_KEY,JSON.stringify(next));
+    setMenuStyle({position:'absolute',left:pos.left,top:pos.top,zIndex:6});
+  };
+
+  const startMenuDrag=(e:ReactPointerEvent<HTMLButtonElement>)=>{
+    if(e.button!==0)return;
+    const wrap=wrapRef.current;
+    const menu=menuRef.current;
+    if(!wrap||!menu)return;
+    const wr=wrap.getBoundingClientRect();
+    const mr=menu.getBoundingClientRect();
+    dragMenu.current={dx:e.clientX-mr.left,dy:e.clientY-mr.top,w:mr.width,h:mr.height};
+    setDraggingMenu(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const moveMenuDrag=(e:ReactPointerEvent<HTMLButtonElement>)=>{
+    if(!dragMenu.current)return;
+    const wrap=wrapRef.current;
+    if(!wrap)return;
+    const wr=wrap.getBoundingClientRect();
+    const pos=clampMenuPos(e.clientX-wr.left-dragMenu.current.dx,e.clientY-wr.top-dragMenu.current.dy,wr.width,wr.height,dragMenu.current.w,dragMenu.current.h);
+    setMenuStyle({position:'absolute',left:pos.left,top:pos.top,zIndex:6});
+  };
+
+  const endMenuDrag=(e:ReactPointerEvent<HTMLButtonElement>)=>{
+    if(!dragMenu.current)return;
+    const wrap=wrapRef.current;
+    if(wrap){
+      const wr=wrap.getBoundingClientRect();
+      const pos=clampMenuPos(e.clientX-wr.left-dragMenu.current.dx,e.clientY-wr.top-dragMenu.current.dy,wr.width,wr.height,dragMenu.current.w,dragMenu.current.h);
+      pinMenuAt(pos.left,pos.top);
+    }
+    dragMenu.current=null;
+    setDraggingMenu(false);
+  };
+
+  const resetMenuDock=()=>{
+    dragMenu.current=null;
+    setDraggingMenu(false);
+    setPinnedMenu(null);
+    localStorage.removeItem(MENU_POS_KEY);
+  };
+
   return <div className="canvas-scroll" ref={wrapRef} onContextMenu={e=>e.preventDefault()}>
     <div className="canvas-stage" style={{transform:`translate(${pan.x}px, ${pan.y}px) scale(${props.zoom})`}}>
       {props.imageUrl?<><img ref={imgRef} src={props.imageUrl} draggable={false} alt="annotation frame" onLoad={e=>{
@@ -463,8 +553,15 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
       ))}
       </>:<div className="empty-canvas"><strong>Select a video or image</strong><span>Choose a project, upload media, then start annotation.</span></div>}
     </div>
-    {hasMask&&props.imageUrl&&<div className="mask-label-menu" style={menuStyle}>
+    {hasMask&&props.imageUrl&&<div ref={menuRef} className={`mask-label-menu${draggingMenu?' dragging':''}${pinnedMenu?' pinned':''}`} style={menuStyle}>
       <div className="mask-label-bar">
+        <button type="button" className="mask-label-handle" title="Drag to move. Double-click to snap back to the mask." aria-label="Move class bar" onPointerDown={startMenuDrag} onPointerMove={moveMenuDrag} onPointerUp={endMenuDrag} onPointerCancel={endMenuDrag} onDoubleClick={resetMenuDock}>
+          <svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true">
+            <circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/>
+            <circle cx="3" cy="8" r="1.2"/><circle cx="7" cy="8" r="1.2"/>
+            <circle cx="3" cy="13" r="1.2"/><circle cx="7" cy="13" r="1.2"/>
+          </svg>
+        </button>
         <button type="button" className="mask-label-toggle" onClick={()=>setMenuOpen(open=>!open)}>
           <i style={{background:currentLabel?.color??'#4e8ef7'}}/>
           <span>{currentLabel?.name??'Choose class'}</span>
