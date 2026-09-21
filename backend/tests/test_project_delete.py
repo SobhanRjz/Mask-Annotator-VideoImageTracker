@@ -52,10 +52,13 @@ class ProjectDeleteTests(unittest.TestCase):
         self.assertFalse(mask_path.exists())
         reused = project_service.create('Job to delete')
         self.assertEqual(reused['slug'], 'job-to-delete')
-        with sqlite3.connect(settings.db_path) as conn:
+        conn = sqlite3.connect(settings.db_path)
+        try:
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM labels').fetchone()[0], 8)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM media').fetchone()[0], 0)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM annotations').fetchone()[0], 0)
+        finally:
+            conn.close()
 
 
 if __name__ == '__main__':
