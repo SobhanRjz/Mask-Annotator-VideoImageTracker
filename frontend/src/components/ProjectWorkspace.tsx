@@ -1,7 +1,7 @@
 import {useMemo,useState} from 'react';
 import * as api from '../api/client';
 import {filterLibrary,firstIncompleteStill,libraryRows,libraryTabCounts,type LibraryTab} from '../mediaLibrary';
-import {mediaReady,type Label,type Media,type Project} from '../types';
+import {mediaReady,type Media,type Project} from '../types';
 import {formatDuration} from './ExtractDialog';
 import {TimeChip} from './TimeChip';
 import {TrashIcon} from './TrashIcon';
@@ -23,9 +23,6 @@ export function ProjectWorkspace(props:{
   onDeletePictures:()=>void;
   onSetVideoComplete:(item:Media,complete:boolean)=>void;
   onSetPicturesComplete:(complete:boolean)=>void;
-  onAddLabel:()=>void;
-  onLabelColor:(id:number,color:string)=>void;
-  onDeleteLabel:(label:Label)=>void;
   onDeleteProject:()=>void;
 }){
   const {project}=props;
@@ -101,6 +98,7 @@ export function ProjectWorkspace(props:{
                     <strong>Pictures</strong>
                     <small>{row.images.length} still{row.images.length!==1?'s':''}
                       {' · '}{row.images.reduce((sum,item)=>sum+(item.annotation_count??0),0)} annotations
+                      {row.images.some(item=>(item.healthy_count??0)>0)&&<>{' · '}{row.images.reduce((sum,item)=>sum+(item.healthy_count??0),0)} healthy</>}
                     </small>
                     <div className="meta">
                       <TimeChip seconds={row.images.reduce((sum,item)=>sum+(item.annotation_seconds??0),0)} compact/>
@@ -129,6 +127,7 @@ export function ProjectWorkspace(props:{
                   </small>
                   <div className="meta">
                     <span>{item.annotation_count??0} annotations</span>
+                    {(item.healthy_count??0)>0&&<span>{item.healthy_count} healthy</span>}
                     <span>{item.excluded_count??0} excluded</span>
                     <TimeChip seconds={item.annotation_seconds??0} compact/>
                   </div>
@@ -146,17 +145,13 @@ export function ProjectWorkspace(props:{
         </section>
         <aside className="labels-panel workspace-labels">
           <div className="section-title">
-            <div><div className="panel-kicker">PROJECT LABELS</div><h2>Defect legend</h2><p>{project.labels.length} classes for this inspection.</p></div>
-            <button onClick={props.onAddLabel}>+ Add</button>
+            <div><div className="panel-kicker">DEFECT LABELS</div><h2>Defect legend</h2><p>Copied when this project was created. Change the shared set on the projects page; it applies to new projects.</p></div>
           </div>
           <div className="label-list">
             {project.labels.map(label=>(
-              <div className="label-row" key={label.id}>
-                <label className="swatch" title="Change color">
-                  <input type="color" value={label.color.toLowerCase()} onChange={e=>props.onLabelColor(label.id,e.target.value)}/>
-                </label>
+              <div className="label-row readonly" key={label.id}>
+                <span className="swatch-dot" style={{background:label.color}}/>
                 <span>{label.name}</span>
-                <button className="ghost danger-text" onClick={()=>props.onDeleteLabel(label)}>×</button>
               </div>
             ))}
           </div>
