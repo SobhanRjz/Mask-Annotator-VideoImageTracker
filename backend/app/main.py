@@ -9,6 +9,8 @@ from app.services.sam2_runtime import sam2_runtime
 @asynccontextmanager
 async def lifespan(app:FastAPI):
     initialize_db()
+    from app.services.project_service import project_service
+    project_service.sync_projects()
     threading.Thread(target=sam2_runtime.initialize,name='sam2-init',daemon=True).start()
     yield
     sam2_runtime.shutdown()
