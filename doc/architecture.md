@@ -79,15 +79,16 @@ projects 1──* labels
 | Table              | Role |
 |--------------------|------|
 | `projects`         | Named annotation job |
-| `labels`           | Per-project copy of a defect class + color. Unique `(project_id, name)`. Copied when the project is created. |
-| `defect_catalog`   | Shared defect names and colors edited on the projects page. When it has rows, every new project copies that full set. An empty catalog uses the built-in defaults. |
+| `labels`           | Per-project class + color. Unique `(project_id, name)`. `kind=defect` is the shared catalog (or the built-in set when the catalog is empty). `kind=full` is Healthy and Loss of view (CU), present on every project. |
+| `defect_catalog`   | Shared defect names and colors edited on the projects page. Saving it replaces the label set on every project. An empty catalog means the built-in defaults. |
+| `archived_annotations` | Masks whose defect name was removed from the shared set. The PNG stays on disk. Adding that name again (ignoring capital letters) puts the mask back on the same frame. |
 | `media`            | `kind` is `video` or `image`. Videos stay as original files; frames decode on demand. `annotation_complete` is a manual Done flag (`0`/`1`). Stills stay separate rows; the UI groups them as one Pictures album that is complete only when every still is flagged. |
-| `annotations`      | One binary mask PNG per instance. `source` is `manual` or `auto`. `track_group` groups a tracking run. |
+| `annotations`      | One binary mask PNG per visible instance. `source` is `manual` or `auto`. `track_group` groups a tracking run. Hidden masks live in `archived_annotations` until their defect name returns. |
 | `excluded_frames`  | Soft-delete of a frame from UI dataset/export. Source video is never rewritten. |
 | `healthy_frames`   | A frame or still marked healthy: reviewed, with no defect. Saving a defect mask on that frame clears the mark. |
 | `app_settings`     | Site key/value store. `sam_model` is `tiny` / `small` / `balanced` / `large`. |
 
-Built-in labels, used only when the catalog is empty: Root, Crack, Obstacle, Deposits, Deformed, Broken, Joint Displaced, Surface Damage. A saved catalog replaces that set for projects created afterward. Existing projects keep the labels they were created with.
+Built-in labels, used when the catalog is empty: Root, Crack, Obstacle, Deposits, Deformed, Broken, Joint Displaced, Surface Damage. Saving the catalog, or starting the API, forces every existing project onto that set. Names that remain keep their masks and update color. Names that are removed drop out of the legend, the annotation class list, and exports; their masks are kept and return when the same name is saved again. A frame marked healthy while those masks are hidden loses that mark when the masks return. Deleting the media, or deleting a frame’s annotations, removes the hidden masks for good.
 
 Disk layout under `/data`:
 
@@ -105,14 +106,15 @@ Base path `/api`.
 | Area | Methods | Notes |
 |------|---------|--------|
 | Projects | `GET/POST /projects`, `GET/DELETE /projects/{pid}` | Create copies the defect catalog, or the built-in set when the catalog is empty |
-| Defect labels | `GET/PUT /projects/catalog/labels` | Shared names and colors. PUT replaces the catalog. An empty list clears it |
+| Defect labels | `GET/PUT /projects/catalog/labels` | Shared names and colors. PUT replaces the catalog and applies it to every project. An empty list restores the built-in set everywhere |
 | Upload | `POST /projects/{pid}/media` | `multipart/form-data` field `files` |
 | Media | `GET/PATCH/DELETE /media/{mid}` | PATCH `{annotation_complete}` is videos only |
 | Frames | `GET /media/{mid}/frame/{n}`, `GET /media/{mid}/frames` | Optional `thumb=` for JPEG thumbs |
 | Project stills | `PATCH /projects/{pid}/images/complete`, `DELETE /projects/{pid}/images` | Album Done flag; delete stills only |
 | Exclude | `POST /media/{mid}/frames/{n}/exclude` | `{excluded, delete_annotations}` |
 | Healthy | `POST /media/{mid}/frames/{n}/healthy` | `{healthy}`. Marks a still or video frame as reviewed with no defect. Removes masks on that frame. |
-| Annotations | `GET /annotations/media/{mid}`, `POST /annotations/masks`, `DELETE /annotations/{id}` | Mask PNG and thumbnail JPEG endpoints |
+| Annotations | `GET /annotations/media/{mid}`, `POST /annotations/masks`, `POST /annotations/full`, `DELETE /annotations/{id}` | `POST /full` saves a mask that covers the whole frame for Healthy or Loss of view (CU) and removes other masks on that frame |
+| Tracking | `POST /tracking/full` | Fills From–To at the save step with a whole-frame mask. Does not call SAM2. Skips excluded frames and frames that already have a manual mask |
 | Prompts | `POST /prompts/sessions`, `POST .../predict`, `DELETE .../{sid}` | SAM2 interactive mask |
 | Tracking | `POST /tracking`, `GET /tracking/{jid}`, `DELETE /tracking/{jid}` | Async job, poll ~700ms from UI |
 | Settings | `GET/POST /settings/model`, `GET /settings/model/jobs/{id}` | SAM 2.1 size catalog, cache flags, switch job with download progress |
@@ -149,6 +151,8 @@ VRAM policy (8 GB class GPUs such as RTX 3070 Ti):
 4. Every frame is processed. Only frames matching `abs(f-start) % step == 0`, plus the end frame, are kept (seed itself is skipped in the result set).
 5. If `replace_auto_masks`, auto annotations in that range for the same label are deleted; **manual** frames are never replaced (`bulk_save` skips frames that already have non-auto annotations).
 6. New rows get `source='auto'` and a `track_group` like `sam2-{jobid}`.
+
+Healthy and Loss of view (CU) use `POST /tracking/full` instead of the steps above. Each saved frame gets one mask covering the whole image. SAM2 is not called. Manual masks and excluded frames are left unchanged.
 
 Editing a tracked mask and saving it sets `source='manual'`, so later tracks preserve that keyframe.
 
