@@ -97,7 +97,7 @@ test('the tracker button names one mask or a count',()=>{
 });
 
 test('the frames heading counts annotated frames against the full set',()=>{
-  assert.equal(annotatedFrameCount([{annotation_count:0},{annotation_count:2},{annotation_count:1},{annotation_count:0}]),2);
+  assert.equal(annotatedFrameCount([{annotation_count:0},{annotation_count:2},{annotation_count:1},{annotation_count:0,healthy:true}]),3);
   assert.equal(annotatedFrameCount([]),0);
 });
 

@@ -71,21 +71,26 @@ export function trackSeedsMatchFrom(
   return seeds.every(item=>item.frame===fromIndex);
 }
 
-export function annotatedFrameCount(frames:{annotation_count:number}[]){
-  return frames.reduce((n,item)=>n+(item.annotation_count>0?1:0),0);
+export function frameIsReviewed(frame:{annotation_count:number;healthy?:boolean}){
+  return frame.annotation_count>0||!!frame.healthy;
+}
+
+export function annotatedFrameCount(frames:{annotation_count:number;healthy?:boolean}[]){
+  return frames.reduce((n,item)=>n+(frameIsReviewed(item)?1:0),0);
 }
 
 export type FrameStatusFilter='all'|'annotated'|'unannotated';
 
-export function filterFrames<T extends {annotation_count:number;labels?:{id:number}[]}>(
+export function filterFrames<T extends {annotation_count:number;healthy?:boolean;labels?:{id:number}[]}>(
   frames:T[],
   status:FrameStatusFilter,
   labelIds:number[],
 ){
   const wanted=new Set(labelIds);
   return frames.filter(item=>{
-    if(status==='annotated'&&item.annotation_count<=0)return false;
-    if(status==='unannotated'&&item.annotation_count>0)return false;
+    const reviewed=frameIsReviewed(item);
+    if(status==='annotated'&&!reviewed)return false;
+    if(status==='unannotated'&&reviewed)return false;
     if(wanted.size&&!(item.labels??[]).some(label=>wanted.has(label.id)))return false;
     return true;
   });
