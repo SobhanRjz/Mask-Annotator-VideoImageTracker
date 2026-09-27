@@ -1,5 +1,5 @@
 export type ProjectSummary={id:number;name:string;slug?:string;description:string;media_count:number;annotation_count:number;annotation_seconds?:number;cover_media_id?:number|null;created_at:string};
-export type Label={id:number;project_id:number;name:string;color:string};
+export type Label={id:number;project_id:number;name:string;color:string;kind?:'defect'|'full'|string};
 export type DefectLabel={name:string;color:string};
 export type DefectCatalog={custom:boolean;labels:DefectLabel[]};
 export type ExtractStatus='pending'|'extracting'|'ready'|'failed'|string;
