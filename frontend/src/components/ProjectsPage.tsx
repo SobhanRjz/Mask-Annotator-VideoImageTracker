@@ -1,6 +1,7 @@
 import {useMemo,useState} from 'react';
 import * as api from '../api/client';
 import type {ProjectSummary} from '../types';
+import {DefectLabelEditor} from './DefectLabelEditor';
 import {TimeChip} from './TimeChip';
 import {TrashIcon} from './TrashIcon';
 
@@ -39,6 +40,7 @@ export function ProjectsPage(props:{
           <button className="primary" onClick={props.onCreate} disabled={props.boot!=='ready'||props.busy}>New project</button>
         </div>
       </section>
+      <DefectLabelEditor ready={props.boot==='ready'}/>
       <div className="catalog-grid">
         {filtered.map(item=>(
           <article className="catalog-card" key={item.id}>
