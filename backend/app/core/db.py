@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS excluded_frames (media_id INTEGER NOT NULL REFERENCES
 CREATE TABLE IF NOT EXISTS healthy_frames (media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,frame INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(media_id,frame));
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS defect_catalog (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL COLLATE NOCASE UNIQUE,color TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS archived_annotations (id INTEGER PRIMARY KEY AUTOINCREMENT,media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,frame INTEGER NOT NULL,label_name TEXT NOT NULL,mask_path TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'manual',track_group TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS idx_archived_media_name ON archived_annotations(media_id,label_name);
 '''
 MEDIA_COLUMNS = (
     ('source_fps', 'REAL'),
@@ -84,6 +86,9 @@ def _migrate_project_slugs(conn: sqlite3.Connection):
     conn.execute(
         'CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name_nocase ON projects(name COLLATE NOCASE)'
     )
+    label_cols = {row[1] for row in conn.execute('PRAGMA table_info(labels)')}
+    if 'kind' not in label_cols:
+        conn.execute("ALTER TABLE labels ADD COLUMN kind TEXT NOT NULL DEFAULT 'defect'")
 
 
 def initialize_db():
