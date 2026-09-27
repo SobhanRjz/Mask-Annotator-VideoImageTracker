@@ -254,6 +254,13 @@ class MediaService:
                     (mid, start, end),
                 )
             }
+            healthy = {
+                row['frame']
+                for row in conn.execute(
+                    'SELECT frame FROM healthy_frames WHERE media_id=? AND frame>=? AND frame<?',
+                    (mid, start, end),
+                )
+            }
             for row in conn.execute(
                 '''SELECT a.id annotation_id, a.frame, a.source, l.id label_id, l.name, l.color
                    FROM annotations a JOIN labels l ON l.id=a.label_id
@@ -275,6 +282,7 @@ class MediaService:
                 'frame': index,
                 'annotation_count': anns.get(index, 0),
                 'excluded': index in excluded,
+                'healthy': index in healthy,
                 'labels': labels_by_frame.get(index, []),
             }
             for index in range(start, end)
@@ -305,6 +313,36 @@ class MediaService:
         for path in masks:
             Path(path).unlink(missing_ok=True)
         return {'frame': frame, 'excluded': excluded, 'annotations_deleted': len(masks)}
+
+    def set_healthy(self, mid, frame, healthy=True):
+        media = self.get(mid)
+        frame = int(frame)
+        count = int(media['frame_count'] or 0)
+        if frame < 0 or frame >= count:
+            raise ValueError('Frame is out of range')
+        masks = []
+        with db() as conn:
+            if healthy:
+                masks = [
+                    row['mask_path']
+                    for row in conn.execute(
+                        'SELECT mask_path FROM annotations WHERE media_id=? AND frame=?',
+                        (mid, frame),
+                    )
+                ]
+                conn.execute('DELETE FROM annotations WHERE media_id=? AND frame=?', (mid, frame))
+                conn.execute(
+                    'INSERT OR IGNORE INTO healthy_frames(media_id, frame) VALUES (?,?)',
+                    (mid, frame),
+                )
+            else:
+                conn.execute(
+                    'DELETE FROM healthy_frames WHERE media_id=? AND frame=?',
+                    (mid, frame),
+                )
+        for path in masks:
+            Path(path).unlink(missing_ok=True)
+        return {'frame': frame, 'healthy': bool(healthy), 'annotations_deleted': len(masks)}
 
     def delete(self, mid):
         media = self.get(mid)
