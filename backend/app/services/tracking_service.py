@@ -6,7 +6,7 @@ from app.services.media_service import media_service
 from app.services.sam2_runtime import sam2_runtime
 @dataclass
 class Job:
-    id:str;media_id:int;annotation_ids:list;start_frame:int;end_frame:int;frame_step:int;replace_auto:bool;status:str='queued';progress:int=0;current_frame:int|None=None;created_annotations:list[int]=field(default_factory=list);removed:int=0;error:str|None=None;cancel_requested:bool=False;lock:threading.Lock=field(default_factory=threading.Lock,repr=False)
+    id:str;media_id:int;annotation_ids:list;start_frame:int;end_frame:int;frame_step:int;replace_auto:bool;status:str='queued';progress:int=0;current_frame:int|None=None;created_annotations:list[int]=field(default_factory=list);removed:int=0;error:str|None=None;cancel_requested:bool=False;mode:str='sam2';label_id:int|None=None;lock:threading.Lock=field(default_factory=threading.Lock,repr=False)
     def snapshot(self):
         with self.lock:
             data={k:v for k,v in self.__dict__.items() if k!='lock'}
@@ -22,17 +22,27 @@ class TrackingService:
         if isinstance(aids,int):aids=[aids]
         aids=list(dict.fromkeys(aids))
         if not aids:raise ValueError('At least one seed annotation is required')
+        self._check_range(mid,start,end,True)
+        j=Job(uuid.uuid4().hex,mid,aids,start,end,max(1,step),replace)
+        return self._submit(j)
+    def start_full(self,mid,label_id,start,end,step=5,replace=True):
+        media=self._check_range(mid,start,end,False)
+        annotation_service.require_full_label(label_id,media['project_id'])
+        j=Job(uuid.uuid4().hex,mid,[],start,end,max(1,step),replace,mode='full',label_id=label_id)
+        return self._submit(j)
+    def _submit(self,j):
+        with self.guard:self.jobs[j.id]=j
+        self.pool.submit(self._run,j);return j.snapshot()
+    def _check_range(self,mid,start,end,require_different):
         m=media_service.get(mid)
-        if start==end:raise ValueError('Target frame must differ from seed')
+        if require_different and start==end:raise ValueError('Target frame must differ from seed')
         if m.get('kind')=='image':
             stills=media_service.project_stills(m['project_id'])
             last=len(stills)-1
             if last<0 or not(0<=start<=last and 0<=end<=last):raise ValueError('Frame out of range')
             if stills[start]['id']!=mid:raise ValueError('From picture must match the seed')
         elif not(0<=start<m['frame_count'] and 0<=end<m['frame_count']):raise ValueError('Frame out of range')
-        j=Job(uuid.uuid4().hex,mid,aids,start,end,max(1,step),replace)
-        with self.guard:self.jobs[j.id]=j
-        self.pool.submit(self._run,j);return j.snapshot()
+        return m
     def get(self,jid):return self.obj(jid).snapshot()
     def is_busy(self):
         with self.guard:
@@ -42,6 +52,8 @@ class TrackingService:
         with j.lock:j.cancel_requested=True
         return j.snapshot()
     def _run(self,j):
+        if j.mode=='full':
+            self._run_full(j);return
         try:
             with j.lock:j.status='running';j.progress=1
             def prog(f,p):
@@ -89,6 +101,21 @@ class TrackingService:
                 j.current_frame=j.end_frame if not stopped else farthest_saved if farthest_saved is not None else j.current_frame
         except InterruptedError:
             with j.lock:j.status='cancelled'
+        except Exception as e:
+            with j.lock:j.status='failed';j.error=str(e)
+    def _run_full(self,j):
+        try:
+            with j.lock:j.status='running';j.progress=1
+            def prog(frame,percent):
+                with j.lock:j.current_frame=frame;j.progress=percent
+            def cancelled():
+                with j.lock:return j.cancel_requested
+            created,stopped=annotation_service.fill_full_frames(j.media_id,j.label_id,j.start_frame,j.end_frame,j.frame_step,j.replace_auto,'full-%s'%j.id[:8],prog,cancelled)
+            with j.lock:
+                j.created_annotations=created
+                j.status='cancelled' if stopped else 'completed'
+                j.progress=100
+                j.current_frame=j.end_frame if not stopped else j.current_frame
         except Exception as e:
             with j.lock:j.status='failed';j.error=str(e)
 tracking_service=TrackingService()
