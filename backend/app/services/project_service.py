@@ -6,6 +6,10 @@ from app.services.media_service import enrich
 from app.utils.colors import ensure_unique, unique_color
 from app.utils.slugs import allocate_slug
 
+FULL_FRAME_LABELS=[
+    ('Healthy','#3DDC97'),
+    ('Loss of view (CU)','#8E9AAB'),
+]
 DEFAULT_DEFECT_LABELS=[
     ('Root','#51B56D'),
     ('Crack','#E45B5B'),
@@ -41,7 +45,9 @@ class ProjectService:
                 cur=c.execute('INSERT INTO projects(name,slug,description) VALUES (?,?,?)',(name,slug,description));pid=cur.lastrowid
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f'A project named "{name}" already exists') from exc
-            if seed_defaults:self._seed_labels(c,pid)
+            if seed_defaults:
+                self._seed_labels(c,pid)
+                self._ensure_full_labels(c,pid)
         (settings.media_root/str(pid)).mkdir(parents=True,exist_ok=True);return self.get(pid)
     def get(self,ref):
         pid=self.resolve_id(ref)
@@ -49,12 +55,15 @@ class ProjectService:
             p=c.execute('SELECT * FROM projects WHERE id=?',(pid,)).fetchone()
             if not p:raise KeyError('Project not found')
             labels=[dict(x) for x in c.execute('SELECT * FROM labels WHERE project_id=? ORDER BY id',(pid,))]
+            order=self._label_order(c)
+            labels.sort(key=lambda row:(0 if row.get('kind')!='full' else 1,order.get((row['name'] or '').casefold(),len(order)),row['id']))
             media=[enrich(x) for x in c.execute('''SELECT m.*, (SELECT COUNT(*) FROM annotations a WHERE a.media_id=m.id) annotation_count,(SELECT COUNT(*) FROM excluded_frames e WHERE e.media_id=m.id) excluded_count,(SELECT COUNT(*) FROM healthy_frames h WHERE h.media_id=m.id) healthy_count FROM media m WHERE project_id=? ORDER BY id DESC''',(pid,))]
             seconds=sum(int(item.get('annotation_seconds') or 0) for item in media)
             return {**dict(p),'labels':labels,'media':media,'annotation_seconds':seconds}
     def delete(self,pid):
         with db() as c:
-            mask_rows=c.execute('SELECT a.mask_path FROM annotations a JOIN media m ON m.id=a.media_id WHERE m.project_id=?',(pid,)).fetchall()
+            mask_rows=c.execute('''SELECT a.mask_path FROM annotations a JOIN media m ON m.id=a.media_id WHERE m.project_id=?
+                UNION ALL SELECT a.mask_path FROM archived_annotations a JOIN media m ON m.id=a.media_id WHERE m.project_id=?''',(pid,pid)).fetchall()
             c.execute('DELETE FROM projects WHERE id=?',(pid,))
         for row in mask_rows:
             from pathlib import Path
@@ -71,6 +80,7 @@ class ProjectService:
             name=(item.get('name') or '').strip()
             if not name:raise ValueError('Label name is required')
             key=name.casefold()
+            if key in {item.casefold() for item,_color in FULL_FRAME_LABELS}:raise ValueError(f'{name} is reserved for full-frame marks')
             if key in seen:raise ValueError('Label name already exists')
             seen.add(key)
             color=ensure_unique(item.get('color') or '',colors)
@@ -80,7 +90,95 @@ class ProjectService:
             c.execute('DELETE FROM defect_catalog')
             if cleaned:
                 c.executemany('INSERT INTO defect_catalog(name,color,position) VALUES (?,?,?)',[(name,color,index) for index,(name,color) in enumerate(cleaned)])
+            self._sync_all(c)
         return self.defect_labels()
+    def sync_projects(self):
+        with db() as conn:
+            self._sync_all(conn)
+    def sync_project(self,pid):
+        with db() as conn:
+            self._sync_project(conn,pid,self._active_labels(conn))
+    def _label_order(self,conn):
+        return {name.casefold():index for index,(name,_color) in enumerate(self._active_labels(conn))}
+    def _active_labels(self,conn):
+        rows=conn.execute('SELECT name,color FROM defect_catalog ORDER BY position,id').fetchall()
+        if rows:return [(row['name'],row['color']) for row in rows]
+        return list(DEFAULT_DEFECT_LABELS)
+    def _sync_all(self,conn):
+        labels=self._active_labels(conn)
+        for row in conn.execute('SELECT id FROM projects'):
+            self._sync_project(conn,row['id'],labels)
+    def _sync_project(self,conn,pid,labels):
+        desired={name.casefold():(name,color) for name,color in labels}
+        existing=list(conn.execute('SELECT id,name FROM labels WHERE project_id=? ORDER BY id',(pid,)))
+        grouped={}
+        for row in existing:
+            grouped.setdefault((row['name'] or '').casefold(),[]).append(row)
+        kept={}
+        reserved={name.casefold() for name,_color in FULL_FRAME_LABELS}
+        for key,rows in grouped.items():
+            if key in reserved:continue
+            if key not in desired:
+                for row in rows:
+                    self._park_label(conn,row['id'],row['name'])
+                    conn.execute('DELETE FROM labels WHERE id=?',(row['id'],))
+                continue
+            target_name,target_color=desired[key]
+            keeper=next((row for row in rows if row['name']==target_name),rows[0])
+            for row in rows:
+                if row['id']==keeper['id']:continue
+                self._park_label(conn,row['id'],row['name'])
+                conn.execute('DELETE FROM labels WHERE id=?',(row['id'],))
+            conn.execute('UPDATE labels SET name=?,color=? WHERE id=?',(target_name,target_color,keeper['id']))
+            kept[key]=keeper['id']
+        for name,color in labels:
+            key=name.casefold()
+            label_id=kept.get(key)
+            if label_id is None:
+                cur=conn.execute('INSERT INTO labels(project_id,name,color) VALUES (?,?,?)',(pid,name,color))
+                label_id=cur.lastrowid
+            self._restore_parked(conn,pid,label_id,name)
+        self._ensure_full_labels(conn,pid)
+    def _ensure_full_labels(self,conn,pid):
+        existing=list(conn.execute('SELECT id,name FROM labels WHERE project_id=? ORDER BY id',(pid,)))
+        grouped={}
+        for row in existing:
+            grouped.setdefault((row['name'] or '').casefold(),[]).append(row)
+        for name,color in FULL_FRAME_LABELS:
+            rows=grouped.get(name.casefold(),[])
+            if rows:
+                keeper=rows[0]
+                for row in rows[1:]:
+                    self._park_label(conn,row['id'],row['name'])
+                    conn.execute('DELETE FROM labels WHERE id=?',(row['id'],))
+                conn.execute('UPDATE labels SET name=?,color=?,kind=? WHERE id=?',(name,color,'full',keeper['id']))
+                label_id=keeper['id']
+            else:
+                cur=conn.execute('INSERT INTO labels(project_id,name,color,kind) VALUES (?,?,?,?)',(pid,name,color,'full'))
+                label_id=cur.lastrowid
+            self._restore_parked(conn,pid,label_id,name)
+    def _park_label(self,conn,label_id,label_name):
+        rows=conn.execute('SELECT media_id,frame,mask_path,source,track_group,created_at,updated_at FROM annotations WHERE label_id=?',(label_id,)).fetchall()
+        if not rows:return
+        conn.executemany('''INSERT INTO archived_annotations(media_id,frame,label_name,mask_path,source,track_group,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)''',[
+            (row['media_id'],row['frame'],label_name,row['mask_path'],row['source'],row['track_group'],row['created_at'],row['updated_at']) for row in rows
+        ])
+        conn.execute('DELETE FROM annotations WHERE label_id=?',(label_id,))
+    def _restore_parked(self,conn,pid,label_id,name):
+        rows=conn.execute('''SELECT a.id,a.media_id,a.frame,a.mask_path,a.source,a.track_group,a.created_at,a.updated_at
+            FROM archived_annotations a JOIN media m ON m.id=a.media_id
+            WHERE m.project_id=? AND a.label_name=? COLLATE NOCASE''',(pid,name)).fetchall()
+        if not rows:return
+        conn.executemany('''INSERT INTO annotations(media_id,frame,label_id,mask_path,source,track_group,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)''',[
+            (row['media_id'],row['frame'],label_id,row['mask_path'],row['source'],row['track_group'],row['created_at'],row['updated_at']) for row in rows
+        ])
+        seen=set()
+        for row in rows:
+            key=(row['media_id'],row['frame'])
+            if key in seen:continue
+            seen.add(key)
+            conn.execute('DELETE FROM healthy_frames WHERE media_id=? AND frame=?',key)
+        conn.execute('DELETE FROM archived_annotations WHERE id IN (%s)'%','.join('?'*len(rows)),[row['id'] for row in rows])
     def _seed_labels(self,conn,pid):
         rows=conn.execute('SELECT name,color FROM defect_catalog ORDER BY position,id').fetchall()
         labels=[(row['name'],row['color']) for row in rows] or DEFAULT_DEFECT_LABELS
