@@ -54,7 +54,7 @@ class ProjectDeleteTests(unittest.TestCase):
         self.assertEqual(reused['slug'], 'job-to-delete')
         conn = sqlite3.connect(settings.db_path)
         try:
-            self.assertEqual(conn.execute('SELECT COUNT(*) FROM labels').fetchone()[0], 8)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM labels').fetchone()[0], 10)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM media').fetchone()[0], 0)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM annotations').fetchone()[0], 0)
         finally:
