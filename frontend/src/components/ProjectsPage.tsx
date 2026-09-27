@@ -13,6 +13,7 @@ export function ProjectsPage(props:{
   onImport:(file:File|null)=>void;
   onOpen:(project:ProjectSummary)=>void;
   onDelete:(project:ProjectSummary)=>void;
+  onLabelsSaved?:()=>void;
 }){
   const [query,setQuery]=useState('');
   const filtered=useMemo(()=>{
@@ -40,7 +41,7 @@ export function ProjectsPage(props:{
           <button className="primary" onClick={props.onCreate} disabled={props.boot!=='ready'||props.busy}>New project</button>
         </div>
       </section>
-      <DefectLabelEditor ready={props.boot==='ready'}/>
+      <DefectLabelEditor ready={props.boot==='ready'} onSaved={props.onLabelsSaved}/>
       <div className="catalog-grid">
         {filtered.map(item=>(
           <article className="catalog-card" key={item.id}>

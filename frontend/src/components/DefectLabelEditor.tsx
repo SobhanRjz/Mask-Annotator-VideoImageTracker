@@ -10,7 +10,7 @@ function sameLabels(left:DefectLabel[],right:DefectLabel[]){
   return left.every((item,index)=>item.name===right[index].name&&item.color.toUpperCase()===right[index].color.toUpperCase());
 }
 
-export function DefectLabelEditor(props:{ready:boolean}){
+export function DefectLabelEditor(props:{ready:boolean;onSaved?:()=>void}){
   const keyRef=useRef(0);
   const [saved,setSaved]=useState<DefectCatalog|null>(null);
   const [rows,setRows]=useState<DraftLabel[]>([]);
@@ -57,7 +57,8 @@ export function DefectLabelEditor(props:{ready:boolean}){
     try{
       const catalog=await api.saveDefectLabels(labels.map(label=>({name:label.name.trim(),color:label.color})));
       apply(catalog);
-      setNotice(catalog.custom?'Saved. New projects copy this set.':'Using the built-in labels for new projects.');
+      props.onSaved?.();
+      setNotice(catalog.custom?'Saved. Every project uses this set.':'Every project uses the built-in labels.');
     }catch(reason){
       setError(reason instanceof Error?reason.message:String(reason));
     }finally{setSaving(false)}
@@ -69,13 +70,13 @@ export function DefectLabelEditor(props:{ready:boolean}){
         <div className="panel-kicker">SHARED LABELS</div>
         <h2>Defect labels</h2>
         <p>{saved?.custom
-          ? 'New projects copy this set. A project keeps the labels it was created with, and those names and colors are not edited inside the project.'
-          : 'New projects use this built-in set until you save your own. Names and colors are not edited inside a project.'}</p>
+          ? 'Every project uses this set for its legend and for annotation. A removed name hides its masks until you add that name again.'
+          : 'Every project uses this built-in set until you save your own. A removed name hides its masks until you add that name again.'}</p>
       </div>
       <div className="catalog-label-actions">
         <button type="button" onClick={()=>setRows(current=>[...current,{key:nextKey(),name:'',color:uniqueColor(current.map(row=>row.color))}])} disabled={!props.ready||saving}>+ Add</button>
         {saved?.custom&&<button type="button" onClick={()=>{
-          if(confirm('New projects will use the built-in defect labels. Projects already created stay as they are.'))void save([]);
+          if(confirm('Every project will use the built-in defect labels. Masks for other names stay hidden until you add that name again.'))void save([]);
         }} disabled={saving}>Built-in defaults</button>}
         <button type="button" className="primary" onClick={()=>void save(rows)} disabled={!props.ready||saving||!dirty}>Save</button>
       </div>
