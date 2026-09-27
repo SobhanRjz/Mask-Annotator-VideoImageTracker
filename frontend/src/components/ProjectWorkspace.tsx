@@ -145,10 +145,10 @@ export function ProjectWorkspace(props:{
         </section>
         <aside className="labels-panel workspace-labels">
           <div className="section-title">
-            <div><div className="panel-kicker">DEFECT LABELS</div><h2>Defect legend</h2><p>Copied when this project was created. Change the shared set on the projects page; it applies to new projects.</p></div>
+            <div><div className="panel-kicker">DEFECT LABELS</div><h2>Defect legend</h2><p>Every project uses the shared defect labels, including annotation. Change them on the projects page.</p></div>
           </div>
           <div className="label-list">
-            {project.labels.map(label=>(
+            {project.labels.filter(label=>label.kind!=='full').map(label=>(
               <div className="label-row readonly" key={label.id}>
                 <span className="swatch-dot" style={{background:label.color}}/>
                 <span>{label.name}</span>
