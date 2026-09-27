@@ -6,8 +6,8 @@ from app.services.media_service import media_service
 from app.services.backup_service import backup_service
 router=APIRouter(prefix='/projects',tags=['projects'])
 class ProjectIn(BaseModel):name:str;description:str=''
-class LabelIn(BaseModel):name:str;color:str|None=None
-class LabelPatch(BaseModel):name:str|None=None;color:str|None=None
+class DefectLabelIn(BaseModel):name:str;color:str|None=None
+class DefectCatalogIn(BaseModel):labels:list[DefectLabelIn]=[]
 class ImagesCompleteIn(BaseModel):annotation_complete:bool
 
 def pid_of(ref:str)->int:
@@ -32,6 +32,12 @@ def create(x:ProjectIn):
 def import_backup(file:UploadFile=File(...)):
     try:return backup_service.restore_upload(file)
     except Exception as e:_http(e)
+@router.get('/catalog/labels')
+def defect_labels():return project_service.defect_labels()
+@router.put('/catalog/labels')
+def put_defect_labels(x:DefectCatalogIn):
+    try:return project_service.save_defect_labels([{'name':item.name,'color':item.color} for item in x.labels])
+    except ValueError as e:raise HTTPException(400,str(e))
 @router.get('/{pid}')
 def get(pid:str):
     try:return project_service.get(pid)
@@ -44,19 +50,6 @@ def download_backup(pid:str):
     return FileResponse(path,filename=path.name,media_type='application/zip')
 @router.delete('/{pid}')
 def delete(pid:str):project_service.delete(pid_of(pid));return {'ok':True}
-@router.post('/{pid}/labels')
-def label(pid:str,x:LabelIn):
-    try:return project_service.add_label(pid_of(pid),x.name,x.color)
-    except Exception as e:raise HTTPException(400,str(e))
-@router.patch('/{pid}/labels/{lid}')
-def patch_label(pid:str,lid:int,x:LabelPatch):
-    try:return project_service.update_label(pid_of(pid),lid,x.name,x.color)
-    except KeyError as e:raise HTTPException(404,str(e))
-    except ValueError as e:raise HTTPException(400,str(e))
-@router.delete('/{pid}/labels/{lid}')
-def del_label(pid:str,lid:int):
-    try:project_service.delete_label(pid_of(pid),lid);return {'ok':True}
-    except ValueError as e:raise HTTPException(409,str(e))
 @router.post('/{pid}/media')
 def upload(pid:str,files:list[UploadFile]=File(...)):return media_service.upload(pid_of(pid),files)
 @router.patch('/{pid}/images/complete')
