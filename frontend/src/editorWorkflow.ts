@@ -99,6 +99,10 @@ export function brushStrokeUsesDetection(hasFocusedMask:boolean){
   return hasFocusedMask?'paint':'detect';
 }
 
+export function strokeSendsToSam(tool:ToolMode,hasFocusedMask:boolean){
+  return tool==='brush'&&brushStrokeUsesDetection(hasFocusedMask)==='detect';
+}
+
 export function escapeUnfocusesMasks(){
   return true;
 }
@@ -146,7 +150,7 @@ export function paintOverlayCopy(overlayId:number,focusedId:number|null){
 }
 
 export function clickOutsideUnfocuses(tool:ToolMode){
-  return tool!=='erase';
+  return tool!=='erase'&&tool!=='paint';
 }
 
 export const DEFAULT_TRACK_PATCH=16;

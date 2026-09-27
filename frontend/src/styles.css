@@ -213,12 +213,44 @@ body{overflow:hidden}
   flex-wrap:wrap;
   justify-content:center;
   align-items:center;
-  gap:4px;
+  gap:8px;
   padding:0;
   background:transparent;
   border:0;
   border-radius:0;
   box-shadow:none;
+}
+.tool-group{
+  display:flex;
+  align-items:center;
+  gap:2px;
+  padding:3px;
+  border-radius:14px;
+  background:#121821;
+  border:1px solid #ffffff14;
+}
+.tool-group-label{
+  padding:0 7px 0 8px;
+  font-size:9px;
+  font-weight:750;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:#8f9baa;
+}
+.tool-group.sam{
+  border-color:#2f6b4e66;
+  background:#101a16;
+}
+.tool-group.sam .tool-group-label{color:#7dcea0}
+.tool-group.manual{
+  border-color:#6a542866;
+  background:#1a1610;
+}
+.tool-group.manual .tool-group-label{color:#e8aa4c}
+.tool-group.view{
+  background:transparent;
+  border-color:transparent;
+  padding:3px 0;
 }
 .toolbar .tool,
 .toolbar .zoom-control button{
@@ -493,6 +525,10 @@ body{overflow:hidden}
 .toolbar .tool.tone-box:hover:not(:disabled),.toolbar .tool.tone-box.active{color:#c9f3fb;background:#16343c;box-shadow:inset 0 0 0 1px #4ec4e088}
 .toolbar .tool.tone-brush{color:#e8aa4c}
 .toolbar .tool.tone-brush:hover:not(:disabled),.toolbar .tool.tone-brush.active{color:#ffe3b0;background:#3a2b14;box-shadow:inset 0 0 0 1px #e8aa4c88}
+.toolbar .tool.tone-scribble{color:#c4a6f5}
+.toolbar .tool.tone-scribble:hover:not(:disabled),.toolbar .tool.tone-scribble.active{color:#efe4ff;background:#2c2144;box-shadow:inset 0 0 0 1px #c4a6f588}
+.toolbar .tool.tone-paint{color:#e8aa4c}
+.toolbar .tool.tone-paint:hover:not(:disabled),.toolbar .tool.tone-paint.active{color:#ffe3b0;background:#3a2b14;box-shadow:inset 0 0 0 1px #e8aa4c88}
 .toolbar .tool.tone-erase{color:#d889d0}
 .toolbar .tool.tone-erase:hover:not(:disabled),.toolbar .tool.tone-erase.active{color:#f6d6f2;background:#3a1f38;box-shadow:inset 0 0 0 1px #d889d088}
 .toolbar .tool.tone-pan{color:#b8c0cc}
@@ -1131,4 +1167,4 @@ button:active:not(:disabled),.button:active,.upload-button:active{transform:tran
 /* Fit annotation media to its viewport while preserving native canvas pixels. */
 .canvas-stage{flex:none}
 .canvas-stage img{width:100%;height:100%}
-.workspace-cover{object-fit:fill;object-position:center;background:#090f16}
+.workspace-cover{object-fit:cover;object-position:center;background:#090f16}

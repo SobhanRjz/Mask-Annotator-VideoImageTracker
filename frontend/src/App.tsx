@@ -15,7 +15,7 @@ import {ProjectsPage} from './components/ProjectsPage';
 import {SettingsPage} from './components/SettingsPage';
 import {TimeChip} from './components/TimeChip';
 import {mediaReady,type Annotation,type BoxPrompt,type FrameInfo,type Label,type Media,type Project,type ProjectSummary,type PromptPoint,type ToolMode,type TrackingJob} from './types';
-import {annotatedFrameCount,acceptedMaskId,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,displayIndex,filterFrames,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom,type FrameStatusFilter} from './editorWorkflow';
+import {annotatedFrameCount,acceptedMaskId,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,displayIndex,filterFrames,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,strokeSendsToSam,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom,type FrameStatusFilter} from './editorWorkflow';
 import {picturesComplete,stepStill,stillFrameRows,stillIndex,stillsOf,trackCursor,trackLastIndex,trackSeedMediaId} from './mediaLibrary';
 import {ensureUniqueColor,uniqueColor} from './labelColor';
 import {projectHref} from './projectSlug';
@@ -798,7 +798,7 @@ function Workspace(){
     setSelected(ann);setLabelId(ann.label_id);setPoints([]);setBox(null);setSelectedIds([ann.id]);
     const blob=await api.getMaskBlob(ann.id);
     await canvas.current?.loadMaskBlob(blob);
-    setTool('brush');setDirty(false);setSaveState('Saved');
+    setTool('paint');setDirty(false);setSaveState('Saved');
   };
 
   const editListedAnnotation=async(targetMediaId:number,frameNum:number,annotationId:number)=>{
@@ -839,7 +839,8 @@ function Workspace(){
       if(e.key==='1'||e.key==='p'||e.key==='P'||e.key==='+'){setTool('positive');return}
       if(e.key==='2'||e.key==='-'||e.key==='_'){setTool('negative');return}
       if(e.key==='b'||e.key==='B'){setTool('box');return}
-      if(e.key==='w'||e.key==='W'){setTool('brush');return}
+      if(e.key==='q'||e.key==='Q'){setTool('brush');return}
+      if(e.key==='w'||e.key==='W'){setTool('paint');return}
       if(e.key==='e'||e.key==='E'){setTool('erase');return}
       if(e.key==='h'||e.key==='H'){setTool('pan');return}
       if(e.key==='['){setBrushSize(size=>Math.max(1,size-2));return}
@@ -1025,28 +1026,37 @@ function Workspace(){
       <main className="editor">
         <div className="toolbar">
           <div className="toolbar-cluster">
-            <Tool active={tool==='select'} onClick={()=>setTool('select')} label="Select · V" tone="select"><SelectIcon/></Tool>
-            <Tool active={tool==='positive'} onClick={()=>setTool('positive')} label="Point · 1" tone="positive"><PointIcon/></Tool>
-            <Tool active={tool==='negative'} onClick={()=>setTool('negative')} label="Exclude · 2" tone="negative"><ExcludeIcon/></Tool>
-            <Tool active={tool==='box'} onClick={()=>setTool('box')} label="Box · B" tone="box"><BoxIcon/></Tool>
-            <Tool active={tool==='brush'} onClick={()=>setTool('brush')} label="Brush · W" tone="brush"><BrushIcon/></Tool>
-            <Tool active={tool==='erase'} onClick={()=>setTool('erase')} label="Eraser · E" tone="erase"><EraserIcon/></Tool>
-            {(tool==='brush'||tool==='erase')&&<div className="brush-control">
+            <div className="tool-group sam" role="group" aria-label="SAM detection">
+              <span className="tool-group-label">SAM</span>
+              <Tool active={tool==='positive'} onClick={()=>setTool('positive')} label="Point · 1" tone="positive"><PointIcon/></Tool>
+              <Tool active={tool==='negative'} onClick={()=>setTool('negative')} label="Exclude · 2" tone="negative"><ExcludeIcon/></Tool>
+              <Tool active={tool==='box'} onClick={()=>setTool('box')} label="Box · B" tone="box"><BoxIcon/></Tool>
+              <Tool active={tool==='brush'} onClick={()=>setTool('brush')} label="Scribble · Q" tone="scribble"><ScribbleIcon/></Tool>
+            </div>
+            <div className="tool-group manual" role="group" aria-label="Manual selection">
+              <span className="tool-group-label">Manual</span>
+              <Tool active={tool==='select'} onClick={()=>setTool('select')} label="Select · V" tone="select"><SelectIcon/></Tool>
+              <Tool active={tool==='paint'} onClick={()=>setTool('paint')} label="Brush · W" tone="paint"><BrushIcon/></Tool>
+              <Tool active={tool==='erase'} onClick={()=>setTool('erase')} label="Eraser · E" tone="erase"><EraserIcon/></Tool>
+            </div>
+            {(tool==='paint'||tool==='brush'||tool==='erase')&&<div className="brush-control">
               <input type="range" min="1" max="80" value={brushSize} onChange={e=>setBrushSize(Number(e.target.value))} aria-label="Brush size"/>
               <b>{brushSize}</b>
             </div>}
-            <Tool active={tool==='pan'} onClick={()=>setTool('pan')} label="Hand · H" tone="pan"><HandIcon/></Tool>
-            <button className="tool tone-history" onClick={undoEdit} disabled={!canUndo} title="Undo · Ctrl+Z" aria-label="Undo"><UndoIcon/></button>
-            <button className="tool tone-history" onClick={redoEdit} disabled={!canRedo} title="Redo · Ctrl+Y" aria-label="Redo"><RedoIcon/></button>
-            <div className="zoom-control">
-              <button className="tool" onClick={()=>setZoom(z=>Math.max(.4,z-.1))} title="Zoom out" aria-label="Zoom out">−</button>
-              <span>{Math.round(zoom*100)}%</span>
-              <button className="tool" onClick={()=>setZoom(z=>Math.min(2.5,z+.1))} title="Zoom in" aria-label="Zoom in">+</button>
+            <div className="tool-group view" role="group" aria-label="View">
+              <Tool active={tool==='pan'} onClick={()=>setTool('pan')} label="Hand · H" tone="pan"><HandIcon/></Tool>
+              <button className="tool tone-history" onClick={undoEdit} disabled={!canUndo} title="Undo · Ctrl+Z" aria-label="Undo"><UndoIcon/></button>
+              <button className="tool tone-history" onClick={redoEdit} disabled={!canRedo} title="Redo · Ctrl+Y" aria-label="Redo"><RedoIcon/></button>
+              <div className="zoom-control">
+                <button className="tool" onClick={()=>setZoom(z=>Math.max(.4,z-.1))} title="Zoom out" aria-label="Zoom out">−</button>
+                <span>{Math.round(zoom*100)}%</span>
+                <button className="tool" onClick={()=>setZoom(z=>Math.min(2.5,z+.1))} title="Zoom in" aria-label="Zoom in">+</button>
+              </div>
             </div>
           </div>
         </div>
         <div className="canvas-wrap">
-          <AnnotationCanvas ref={canvas} imageUrl={api.frameUrl(media.id,frame)} points={points} box={box} tool={tool} brushSize={brushSize} zoom={zoom} disabled={promptBusy} overlays={overlays} focusedId={selected?.id??null} selectedIds={selectedIds} finished={selected!=null&&finishedIds.includes(selected.id)} finishedIds={finishedIds} labels={project.labels} labelId={labelId} showLabelMenu={dirty||!!selected} onPoint={addPoint} onBox={setPromptBox} onDirty={()=>{if(tool==='brush'&&!selected)return;setDirty(true);setSaveState('Unsaved changes')}} onBeforeEdit={pushHistory} onBrushStroke={()=>{void finishBrushDetect()}} onSelect={(id,additive)=>{void pickMask(id,additive)}} onSelectIds={(ids,additive)=>{void pickMasks(ids,additive)}} onUnfocus={()=>{void unfocusMask()}} onLabelId={changeClass} onFinish={()=>{void finishMask()}}/>
+          <AnnotationCanvas ref={canvas} imageUrl={api.frameUrl(media.id,frame)} points={points} box={box} tool={tool} brushSize={brushSize} zoom={zoom} disabled={promptBusy} overlays={overlays} focusedId={selected?.id??null} selectedIds={selectedIds} finished={selected!=null&&finishedIds.includes(selected.id)} finishedIds={finishedIds} labels={project.labels} labelId={labelId} showLabelMenu={dirty||!!selected} onPoint={addPoint} onBox={setPromptBox} onDirty={()=>{if(strokeSendsToSam(tool,Boolean(selected)))return;setDirty(true);setSaveState('Unsaved changes')}} onBeforeEdit={pushHistory} onBrushStroke={()=>{void finishBrushDetect()}} onSelect={(id,additive)=>{void pickMask(id,additive)}} onSelectIds={(ids,additive)=>{void pickMasks(ids,additive)}} onUnfocus={()=>{void unfocusMask()}} onLabelId={changeClass} onFinish={()=>{void finishMask()}}/>
         </div>
         <div className="editor-footer">
           <div className={`editor-chrome${isStill?' stills-chrome':''}`}>
@@ -1154,7 +1164,7 @@ function Workspace(){
     </div>
     <footer className="statusbar">
       <span>{promptBusy?'SAM2 predicting…':status}</span>
-      <span>{isStill?'← → pictures · Esc unfocus · V select · 1 add · 2 cut · tick to finish':'← → frames · Esc unfocus · V select · 1 add · 2 cut · tick to finish'}</span>
+      <span>{isStill?'← → pictures · Esc unfocus · V select · W brush · 1 add · 2 cut · Q scribble · tick to finish':'← → frames · Esc unfocus · V select · W brush · 1 add · 2 cut · Q scribble · tick to finish'}</span>
     </footer>
     {dialogs}
   </div>;
@@ -1187,6 +1197,9 @@ function BoxIcon(){
 }
 function BrushIcon(){
   return <ToolSvg><path d="M14.5 4.5 19 9l-8.2 8.2c-.7.7-1.6 1.1-2.6 1.2l-3.2.3.3-3.2c.1-1 .5-1.9 1.2-2.6z"/><path d="m16.2 6.2 1.6 1.6"/></ToolSvg>;
+}
+function ScribbleIcon(){
+  return <ToolSvg><path d="M4 15.5c1.6-4.2 3.2-4.2 4.8 0s3.2 4.2 4.8 0 3.2-4.2 4.8 0"/><path d="M16.2 5.2 19 8"/><circle cx="19" cy="5.2" r="1.15" fill="currentColor" stroke="none"/></ToolSvg>;
 }
 function EraserIcon(){
   return <ToolSvg><path d="m7 15 8.5-8.5a2.1 2.1 0 0 1 3 3L10 18H7z"/><path d="M6 20h12"/></ToolSvg>;

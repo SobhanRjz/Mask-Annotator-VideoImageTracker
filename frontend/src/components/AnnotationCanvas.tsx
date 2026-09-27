@@ -1,7 +1,7 @@
 import {forwardRef,useEffect,useImperativeHandle,useLayoutEffect,useRef,useState} from 'react';
 import type {CSSProperties,PointerEvent as ReactPointerEvent} from 'react';
 import type {BoxPrompt,Label,PromptPoint,ToolMode} from '../types';
-import {brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,fitScale,paintOverlayCopy,panBy,selectDragStartsMarquee,selectEmptyRelease} from '../editorWorkflow';
+import {clampMenuPos,clickOutsideUnfocuses,fitScale,paintOverlayCopy,panBy,selectDragStartsMarquee,selectEmptyRelease,strokeSendsToSam} from '../editorWorkflow';
 import {MASK_FILL_ALPHA,alphaIntersectsBox,maskCentroid,outlineOffsets,overlayFillAlpha,overlayOutlineAlpha,overlayTone,unionMaskAlpha} from '../maskDraw';
 
 export type MaskOverlay={id:number;color:string;url:string;name:string};
@@ -423,11 +423,17 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
       }
       return;
     }
-    if(e.button===2){e.preventDefault();props.onPoint({...p,positive:false});return}
+    if(e.button===2){
+      if(props.tool==='positive'||props.tool==='negative'||props.tool==='box'||props.tool==='brush'){
+        e.preventDefault();
+        props.onPoint({...p,positive:false});
+      }
+      return;
+    }
     if(e.button!==0)return;
     if(props.tool==='positive'||props.tool==='negative'){props.onPoint({...p,positive:props.tool!=='negative'});return}
     if(props.tool==='box'){boxStart.current=p;setDraftBox([p.x,p.y,p.x,p.y]);e.currentTarget.setPointerCapture(e.pointerId);return}
-    if(props.tool==='erase'&&props.focusedId!=null){
+    if((props.tool==='erase'||props.tool==='paint')&&props.focusedId!=null){
       const img=overlayImgs.current[props.focusedId];
       const c=canvasRef.current;
       const ctx=c?.getContext('2d',{willReadFrequently:true});
@@ -439,7 +445,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
       }
     }
     if(clickOutsideUnfocuses(props.tool)&&props.focusedId!=null&&hitOverlay(p)==null){props.onUnfocus();return}
-    if(!(props.tool==='brush'&&brushStrokeUsesDetection(props.focusedId!=null)==='detect'))props.onBeforeEdit();
+    if(!strokeSendsToSam(props.tool,props.focusedId!=null))props.onBeforeEdit();
     drawing.current=true;last.current=p;e.currentTarget.setPointerCapture(e.pointerId);drawBrush(p,p);props.onDirty();
   };
 
@@ -558,7 +564,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
       <svg className="prompt-layer" viewBox={`0 0 ${size.width} ${size.height}`} preserveAspectRatio="none">
         {props.points.map((p,i)=><g key={i}><circle cx={p.x} cy={p.y} r={9} className={p.positive?'point-pos':'point-neg'}/><circle cx={p.x} cy={p.y} r={2.5} className="point-core"/></g>)}
         {(draftBox??props.box)&&<rect x={(draftBox??props.box)![0]} y={(draftBox??props.box)![1]} width={(draftBox??props.box)![2]-(draftBox??props.box)![0]} height={(draftBox??props.box)![3]-(draftBox??props.box)![1]} className={props.tool==='select'?'prompt-box marquee':'prompt-box'}/>}
-        {cursor&&(props.tool==='brush'||props.tool==='erase')&&<circle cx={cursor.x} cy={cursor.y} r={props.brushSize/2} className="brush-cursor"/>}
+        {cursor&&(props.tool==='brush'||props.tool==='paint'||props.tool==='erase')&&<circle cx={cursor.x} cy={cursor.y} r={props.brushSize/2} className="brush-cursor"/>}
       </svg>
       {overlayLabels.map(item=>(
         <span key={item.id} className={`mask-name-chip${props.finishedIds?.includes(item.id)?' done':''}`} style={{left:item.x*displayScale,top:item.y*displayScale,transform:'translate(-50%,-50%)'}}>{item.name}</span>

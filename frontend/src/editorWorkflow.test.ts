@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {acceptedMaskId,annotatedFrameCount,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,closeSessionAfterPredict,displayIndex,escapeUnfocusesMasks,filterFrames,fitScale,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,paintOverlayCopy,panBy,parseTrackPatch,selectDragStartsBox,selectDragStartsMarquee,selectEmptyRelease,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom} from './editorWorkflow.ts';
+import {acceptedMaskId,annotatedFrameCount,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,closeSessionAfterPredict,displayIndex,escapeUnfocusesMasks,filterFrames,fitScale,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,paintOverlayCopy,panBy,parseTrackPatch,selectDragStartsBox,selectDragStartsMarquee,selectEmptyRelease,strokeSendsToSam,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom} from './editorWorkflow.ts';
 
 test('a generated mask stays on the same prompt tool',()=>{
   assert.equal(toolAfterGeneratedMask('positive'),'positive');
@@ -135,6 +135,14 @@ test('brush on a focused mask stays a local paint edit',()=>{
   assert.equal(brushStrokeUsesDetection(true),'paint');
 });
 
+test('only an unfocused SAM scribble is sent for detection',()=>{
+  assert.equal(strokeSendsToSam('brush',false),true);
+  assert.equal(strokeSendsToSam('brush',true),false);
+  assert.equal(strokeSendsToSam('paint',false),false);
+  assert.equal(strokeSendsToSam('paint',true),false);
+  assert.equal(strokeSendsToSam('positive',false),false);
+});
+
 test('escape unfocuses every mask instead of only clearing prompts',()=>{
   assert.equal(escapeUnfocusesMasks(),true);
 });
@@ -174,8 +182,9 @@ test('a focused overlay is not painted again on top of the live mask',()=>{
   assert.equal(paintOverlayCopy(9,null),true);
 });
 
-test('eraser keeps painting the selected mask when the stroke starts outside it',()=>{
+test('eraser and manual brush keep the selected mask when the stroke starts outside it',()=>{
   assert.equal(clickOutsideUnfocuses('erase'),false);
+  assert.equal(clickOutsideUnfocuses('paint'),false);
   assert.equal(clickOutsideUnfocuses('brush'),true);
   assert.equal(clickOutsideUnfocuses('select'),true);
 });
