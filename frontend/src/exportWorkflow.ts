@@ -14,7 +14,7 @@ export function defaultExportOptions(projectId:number|null):ExportOptions{
     scope:projectId==null?'all':'project',
     projectId,
     format:'coco',
-    includeUnannotated:true,
+    includeUnannotated:false,
     includeAuto:true,
     includeManual:true,
   };

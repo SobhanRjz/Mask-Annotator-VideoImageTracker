@@ -7,7 +7,7 @@ test('homepage export defaults to all projects',()=>{
   assert.equal(options.scope,'all');
   assert.equal(options.projectId,null);
   assert.equal(options.format,'coco');
-  assert.equal(options.includeUnannotated,true);
+  assert.equal(options.includeUnannotated,false);
 });
 
 test('project-page export defaults to that project',()=>{
