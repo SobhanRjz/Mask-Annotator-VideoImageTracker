@@ -305,11 +305,17 @@ class MediaService:
                 masks = [
                     row['mask_path']
                     for row in conn.execute(
-                        'SELECT mask_path FROM annotations WHERE media_id=? AND frame=?',
-                        (mid, frame),
+                        '''SELECT mask_path FROM annotations WHERE media_id=? AND frame=?
+                           UNION ALL
+                           SELECT mask_path FROM archived_annotations WHERE media_id=? AND frame=?''',
+                        (mid, frame, mid, frame),
                     )
                 ]
                 conn.execute('DELETE FROM annotations WHERE media_id=? AND frame=?', (mid, frame))
+                conn.execute(
+                    'DELETE FROM archived_annotations WHERE media_id=? AND frame=?',
+                    (mid, frame),
+                )
         for path in masks:
             Path(path).unlink(missing_ok=True)
         return {'frame': frame, 'excluded': excluded, 'annotations_deleted': len(masks)}
@@ -349,7 +355,12 @@ class MediaService:
         with db() as conn:
             masks = [
                 row['mask_path']
-                for row in conn.execute('SELECT mask_path FROM annotations WHERE media_id=?', (mid,))
+                for row in conn.execute(
+                    '''SELECT mask_path FROM annotations WHERE media_id=?
+                       UNION ALL
+                       SELECT mask_path FROM archived_annotations WHERE media_id=?''',
+                    (mid, mid),
+                )
             ]
             conn.execute('DELETE FROM media WHERE id=?', (mid,))
         Path(media['path']).unlink(missing_ok=True)
