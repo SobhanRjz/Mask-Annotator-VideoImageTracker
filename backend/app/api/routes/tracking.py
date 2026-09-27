@@ -4,6 +4,11 @@ from app.services.tracking_service import tracking_service
 from app.services.sam2_runtime import sam2_runtime
 router=APIRouter(prefix='/tracking',tags=['tracking'])
 class TrackIn(BaseModel):media_id:int;annotation_id:int|None=None;annotation_ids:list[int]|None=None;start_frame:int;end_frame:int;frame_step:int=Field(1,ge=1,le=60);replace_auto_masks:bool=True
+class FullTrackIn(BaseModel):media_id:int;label_id:int;start_frame:int;end_frame:int;frame_step:int=Field(1,ge=1,le=60);replace_auto_masks:bool=True
+@router.post('/full')
+def start_full(x:FullTrackIn):
+    try:return tracking_service.start_full(x.media_id,x.label_id,x.start_frame,x.end_frame,x.frame_step,x.replace_auto_masks)
+    except ValueError as e:raise HTTPException(400,str(e))
 @router.post('')
 def start(x:TrackIn):
     try:
