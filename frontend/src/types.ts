@@ -1,12 +1,14 @@
 export type ProjectSummary={id:number;name:string;slug?:string;description:string;media_count:number;annotation_count:number;annotation_seconds?:number;cover_media_id?:number|null;created_at:string};
 export type Label={id:number;project_id:number;name:string;color:string};
+export type DefectLabel={name:string;color:string};
+export type DefectCatalog={custom:boolean;labels:DefectLabel[]};
 export type ExtractStatus='pending'|'extracting'|'ready'|'failed'|string;
 export type Media={
   id:number;project_id:number;name:string;kind:'video'|'image';width:number;height:number;
   frame_count:number;fps:number;annotation_count?:number;excluded_count?:number;
   source_fps?:number;source_frame_count?:number;extract_fps?:number|null;
   extract_status?:ExtractStatus;duration_sec?:number;frames_dir?:string|null;
-  annotation_seconds?:number;annotation_complete?:boolean;
+  annotation_seconds?:number;annotation_complete?:boolean;healthy_count?:number;
   reused?:boolean;
 };
 export type Project={id:number;name:string;slug?:string;description:string;created_at:string;updated_at:string;labels:Label[];media:Media[];media_count?:number;annotation_count?:number;annotation_seconds?:number};
@@ -37,7 +39,7 @@ export type DashboardStats={
   seconds_total:number;
 };
 export type FrameLabel={annotation_id:number;id:number;name:string;color:string;source?:string};
-export type FrameInfo={frame:number;annotation_count:number;excluded:boolean;labels:FrameLabel[]};
+export type FrameInfo={frame:number;annotation_count:number;excluded:boolean;healthy?:boolean;labels:FrameLabel[]};
 export type Annotation={id:number;media_id:number;frame:number;label_id:number;label_name:string;label_color:string;source:'manual'|'auto'|string;track_group?:string|null};
 export type PromptPoint={x:number;y:number;positive:boolean};
 export type BoxPrompt=[number,number,number,number];
