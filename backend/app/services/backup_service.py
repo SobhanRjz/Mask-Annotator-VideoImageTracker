@@ -40,6 +40,7 @@ class BackupService:
             excluded_rows = []
             healthy_rows = []
             annotation_rows = []
+            archived_rows = []
             if media_ids:
                 placeholders = ','.join('?' * len(media_ids))
                 excluded_rows = [
@@ -60,6 +61,13 @@ class BackupService:
                     dict(row)
                     for row in conn.execute(
                         f'SELECT * FROM annotations WHERE media_id IN ({placeholders}) ORDER BY id',
+                        media_ids,
+                    )
+                ]
+                archived_rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        f'SELECT * FROM archived_annotations WHERE media_id IN ({placeholders}) ORDER BY id',
                         media_ids,
                     )
                 ]
@@ -137,6 +145,7 @@ class BackupService:
                 'excluded_frames': excluded_rows,
                 'healthy_frames': healthy_rows,
                 'annotations': annotations_payload,
+                'archived_annotations': self._archived_payload(work, archived_rows),
             }
             (work / 'backup.json').write_text(
                 json.dumps(payload, indent=2), encoding='utf-8'
@@ -181,6 +190,7 @@ class BackupService:
             )
             created_id = created['id']
             self._restore_into(created_id, payload, work)
+            project_service.sync_project(created_id)
             return project_service.get(created_id)
         except Exception:
             if created_id is not None:
@@ -314,6 +324,52 @@ class BackupService:
                         annotation.get('track_group'),
                     ),
                 )
+
+            for archived in payload.get('archived_annotations') or []:
+                new_mid = media_map.get(archived['media_id'])
+                if new_mid is None:
+                    continue
+                mask_src = self._safe_join(work, archived['mask'])
+                if not mask_src.is_file():
+                    raise ValueError('Backup is missing a mask file')
+                mask_dir = settings.mask_root / str(new_mid)
+                mask_dir.mkdir(parents=True, exist_ok=True)
+                mask_dest = mask_dir / f'{uuid.uuid4().hex}.png'
+                shutil.copy2(mask_src, mask_dest)
+                conn.execute(
+                    '''INSERT INTO archived_annotations(
+                        media_id, frame, label_name, mask_path, source, track_group
+                    ) VALUES (?,?,?,?,?,?)''',
+                    (
+                        new_mid,
+                        archived['frame'],
+                        archived['label_name'],
+                        str(mask_dest),
+                        archived.get('source') or 'manual',
+                        archived.get('track_group'),
+                    ),
+                )
+
+    def _archived_payload(self, work: Path, rows: list[dict]) -> list[dict]:
+        payload = []
+        for row in rows:
+            mask_path = Path(row['mask_path'])
+            rel_mask = f"masks/archived_{row['id']}.png"
+            if mask_path.is_file():
+                mask_dest = work / rel_mask
+                mask_dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(mask_path, mask_dest)
+            payload.append(
+                {
+                    'media_id': row['media_id'],
+                    'frame': row['frame'],
+                    'label_name': row['label_name'],
+                    'source': row['source'],
+                    'track_group': row.get('track_group'),
+                    'mask': rel_mask,
+                }
+            )
+        return payload
 
     def _extract_safe(self, archive: zipfile.ZipFile, dest: Path):
         dest = dest.resolve()
