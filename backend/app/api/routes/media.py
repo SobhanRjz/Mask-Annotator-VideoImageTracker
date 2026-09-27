@@ -4,6 +4,7 @@ from pydantic import BaseModel,Field
 from app.services.media_service import media_service
 router=APIRouter(prefix='/media',tags=['media'])
 class ExcludeIn(BaseModel):excluded:bool=True;delete_annotations:bool=False
+class HealthyIn(BaseModel):healthy:bool=True
 class ExtractIn(BaseModel):frames_per_second:float=Field(gt=0,le=120)
 class TimeIn(BaseModel):seconds:int=Field(ge=0,le=30)
 class CompleteIn(BaseModel):annotation_complete:bool
@@ -28,6 +29,11 @@ def extract(mid:int,x:ExtractIn):
     except ValueError as e:raise HTTPException(400,str(e))
 @router.post('/{mid}/frames/{frame}/exclude')
 def exclude(mid:int,frame:int,x:ExcludeIn):return media_service.set_excluded(mid,frame,x.excluded,x.delete_annotations)
+@router.post('/{mid}/frames/{frame}/healthy')
+def healthy(mid:int,frame:int,x:HealthyIn):
+    try:return media_service.set_healthy(mid,frame,x.healthy)
+    except KeyError as e:raise HTTPException(404,str(e))
+    except ValueError as e:raise HTTPException(400,str(e))
 @router.post('/{mid}/time')
 def add_time(mid:int,x:TimeIn):
     try:return media_service.add_annotation_seconds(mid,x.seconds)
