@@ -81,7 +81,7 @@ export function ExportDialog(props:{
   return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)close()}}>
     <form className="modal export-modal" onSubmit={submit} onKeyDown={e=>{if(e.key==='Escape')close()}}>
       <h2>Export annotations</h2>
-      <p>Choose the project scope, format, and which frames or masks to include. The ZIP is prepared on the server, then downloaded.</p>
+      <p>Choose the project and format. The ZIP includes only frames with a saved defect mask, or marked healthy. Frames you have not reviewed stay out.</p>
 
       <div className="export-scope">
         <span>Projects</span>
@@ -111,10 +111,6 @@ export function ExportDialog(props:{
 
       <div className="export-filters">
         <h3>Include in this export</h3>
-        <label className="switch-row">
-          <input type="checkbox" checked={options.includeUnannotated} disabled={running} onChange={e=>patch({includeUnannotated:e.target.checked})}/>
-          Frames with no annotations
-        </label>
         <label className="switch-row">
           <input type="checkbox" checked={options.includeManual} disabled={running} onChange={e=>patch({includeManual:e.target.checked})}/>
           Manual masks
