@@ -17,7 +17,6 @@ import {TimeChip} from './components/TimeChip';
 import {mediaReady,type Annotation,type BoxPrompt,type FrameInfo,type Label,type Media,type Project,type ProjectSummary,type PromptPoint,type ToolMode,type TrackingJob} from './types';
 import {annotatedFrameCount,acceptedMaskId,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,displayIndex,filterFrames,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,strokeSendsToSam,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom,type FrameStatusFilter} from './editorWorkflow';
 import {picturesComplete,stepStill,stillFrameRows,stillIndex,stillsOf,trackCursor,trackLastIndex,trackSeedMediaId} from './mediaLibrary';
-import {ensureUniqueColor,uniqueColor} from './labelColor';
 import {projectHref} from './projectSlug';
 import {reusedMediaNotice,reusedMediaStatus} from './uploadStatus';
 
@@ -111,6 +110,7 @@ function Workspace(){
   const stills=useMemo(()=>stillsOf(project?.media??[]),[project?.media]);
   const stillPos=media?stillIndex(stills,media.id):-1;
   const isStill=media?.kind==='image';
+  const currentHealthy=!!(isStill?stillFrames[media?.id??-1]?.healthy:frames.find(item=>item.frame===frame)?.healthy);
   const lastTrack=trackLastIndex(media?.kind??'video',stills.length,media?.frame_count??1);
   const trackPos=trackCursor(media?.kind??'video',stillPos,frame);
   const stillsDone=picturesComplete(stills);
@@ -183,6 +183,11 @@ function Workspace(){
   const resetHistory=()=>{historyPast.current=[];historyFuture.current=[];setCanUndo(false);setCanRedo(false)};
 
   const refreshProjects=async()=>setProjects(await api.listProjects());
+  const syncProjectInfo=async()=>{
+    const jobs:Promise<unknown>[]=[refreshProjects()];
+    if(project)jobs.push(refreshProject(project.slug||project.id));
+    await Promise.all(jobs);
+  };
 
   useEffect(()=>{
     let stop=false;
@@ -242,6 +247,17 @@ function Workspace(){
       navigate(projectHref(project,mediaId!=null?`/media/${mediaId}`:''),{replace:true});
     }
   },[project,projectSlug,mediaId,navigate]);
+
+  useEffect(()=>{
+    if(boot!=='ready')return;
+    if(view==='projects'){
+      refreshProjects().catch(()=>{});
+      return;
+    }
+    if(view==='project'&&projectSlug){
+      refreshProject(projectSlug).catch(()=>{});
+    }
+  },[view,projectSlug,boot]);
 
   const closePromptSession=async()=>{
     const id=promptIdRef.current;
@@ -507,6 +523,7 @@ function Workspace(){
         setSelected(ann);setSelectedIds([ann.id]);setDirty(false);setSaveState(`Saved ${new Date().toLocaleTimeString()}`);
         annIdsRef.current=[...new Set([...annIdsRef.current,ann.id])];
         await refreshWorkspace(media.id,frame);
+        await syncProjectInfo();
         if(!silent)setStatus('Annotation saved');
         return ann;
       }catch(e){setSaveState('Save failed');if(!silent)setError(String(e));return null}
@@ -618,6 +635,7 @@ function Workspace(){
         if(['completed','failed','cancelled'].includes(job.status)){
           window.clearInterval(id);
           if(media)await refreshWorkspace(media.id,frame);
+          await syncProjectInfo();
           setStatus(job.status==='completed'?`Tracking complete · ${job.created_annotations.length} masks saved`:job.status==='cancelled'?`Stopped · ${job.created_annotations.length} masks saved`:job.status);
         }
       }catch(e){setError(String(e))}
@@ -666,24 +684,6 @@ function Workspace(){
       setStatus(`Extracted frames from ${current.name}`);
     }catch(e){setError(e instanceof Error?e.message:String(e))}
     finally{setBusy(false)}
-  };
-
-  const newLabel=async()=>{
-    if(!project)return;
-    const name=window.prompt('New defect label');
-    if(!name)return;
-    const color=uniqueColor(project.labels.map(label=>label.color));
-    await api.addLabel(project.id,name,color);
-    await refreshProject(project.id);
-  };
-
-  const changeLabelColor=async(lid:number,color:string)=>{
-    if(!project)return;
-    const others=project.labels.filter(label=>label.id!==lid).map(label=>label.color);
-    try{
-      await api.updateLabel(project.id,lid,{color:ensureUniqueColor(color,others)});
-      await refreshProject(project.id);
-    }catch(e){setError(String(e))}
   };
 
   const requestDeleteAnnotations=(ids:number[])=>{
@@ -764,10 +764,37 @@ function Workspace(){
         if(remaining)await selectAnnotation(remaining,'select');
       }
       if(media)await refreshWorkspace(media.id,frame);
+      await syncProjectInfo();
       setPendingDelete(null);
       setStatus(ids.length===1?'Annotation deleted':`${ids.length} annotations deleted`);
     }catch(e){setError(e instanceof Error?e.message:String(e))}
     finally{setDeleteBusy(false)}
+  };
+
+  const markHealthy=async(healthy:boolean)=>{
+    if(!media)return;
+    const targetFrame=isStill?0:frame;
+    if(healthy&&frameAnns.length&&!confirm(isStill?'Mark this image healthy and remove its defect masks?':'Mark this frame healthy and remove its defect masks?'))return;
+    setBusy(true);setError(null);
+    try{
+      await closePromptSession();
+      await api.setFrameHealthy(media.id,targetFrame,healthy);
+      if(healthy){
+        setFrameAnns([]);
+        setOverlays([]);
+        setSelected(null);
+        setSelectedIds([]);
+        setPoints([]);
+        setBox(null);
+        canvas.current?.clearMask();
+        setDirty(false);
+        setSaveState(isStill?'Image marked healthy':'Frame marked healthy');
+      }
+      await refreshWorkspace(media.id,targetFrame);
+      await syncProjectInfo();
+      setStatus(healthy?(isStill?'Image marked healthy':'Frame marked healthy'):'Healthy mark removed');
+    }catch(e){setError(e instanceof Error?e.message:String(e))}
+    finally{setBusy(false)}
   };
 
   const deleteAnnotationById=(id:number)=>{requestDeleteAnnotations([id])};
@@ -938,14 +965,6 @@ function Workspace(){
       onDeletePictures={()=>setPendingDelete({kind:'stills',count:stillsOf(project.media).length})}
       onSetVideoComplete={(item,complete)=>{void setVideoComplete(item,complete)}}
       onSetPicturesComplete={complete=>{void setPicturesComplete(complete)}}
-      onAddLabel={newLabel}
-      onLabelColor={(id,color)=>void changeLabelColor(id,color)}
-      onDeleteLabel={async label=>{
-        if(confirm(`Delete ${label.name}?`)){
-          try{await api.deleteLabel(project.id,label.id);await refreshProject(project.slug||project.id)}
-          catch(e){setError(String(e))}
-        }
-      }}
       onDeleteProject={()=>requestDeleteProject(project)}
     />
     {dialogs}
@@ -1145,10 +1164,10 @@ function Workspace(){
                 <span>{label.name}</span>
               </button>
             ))}
-            <button type="button" className="label-row-btn add" onClick={newLabel}>+ Add class</button>
           </div>
           <div className="action-row">
             <button className="primary" onClick={()=>saveCurrent(false)} disabled={busy||promptBusy}>Save mask</button>
+            <button type="button" className={`healthy-toggle${currentHealthy?' on':''}`} onClick={()=>void markHealthy(!currentHealthy)} disabled={busy||promptBusy}>{currentHealthy?'Healthy':'Mark healthy'}</button>
             <button className="danger" onClick={deleteCurrentAnnotation} disabled={!selected&&!selectedIds.length}>
               {selectedIds.length>1?`Delete ${selectedIds.length}`:'Delete'}
             </button>
@@ -1309,6 +1328,7 @@ function FrameThumb(props:{
     {props.item.excluded
       ? <button type="button" className="thumb-action restore" title="Restore frame" onClick={props.onRestore}>↩</button>
       : <button type="button" className="thumb-action delete" title="Exclude frame. Shift-click also deletes annotations." onClick={e=>{e.stopPropagation();props.onExclude(e.shiftKey)}}><TrashIcon/></button>}
+    {props.item.healthy&&labels.length===0&&<div className="frame-tags"><span className="frame-tag healthy">Healthy</span></div>}
     {labels.length>0&&<div className="frame-tags">
       {labels.map(lab=>(
         <span key={lab.annotation_id} className="frame-tag" style={{background:lab.color}}>
