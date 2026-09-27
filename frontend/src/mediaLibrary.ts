@@ -11,6 +11,7 @@ export function stillFrameRows(stills:Media[],details:Record<number,FrameInfo>={
       frame:info?.frame??0,
       annotation_count:info?.annotation_count??item.annotation_count??0,
       excluded:info?.excluded??false,
+      healthy:info?.healthy??false,
       labels:info?.labels??[],
     };
   });
