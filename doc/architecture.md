@@ -79,13 +79,15 @@ projects 1──* labels
 | Table              | Role |
 |--------------------|------|
 | `projects`         | Named annotation job |
-| `labels`           | Per-project defect class + color. Unique `(project_id, name)`. Cannot delete a label that still has annotations. |
+| `labels`           | Per-project copy of a defect class + color. Unique `(project_id, name)`. Copied when the project is created. |
+| `defect_catalog`   | Shared defect names and colors edited on the projects page. When it has rows, every new project copies that full set. An empty catalog uses the built-in defaults. |
 | `media`            | `kind` is `video` or `image`. Videos stay as original files; frames decode on demand. `annotation_complete` is a manual Done flag (`0`/`1`). Stills stay separate rows; the UI groups them as one Pictures album that is complete only when every still is flagged. |
 | `annotations`      | One binary mask PNG per instance. `source` is `manual` or `auto`. `track_group` groups a tracking run. |
 | `excluded_frames`  | Soft-delete of a frame from UI dataset/export. Source video is never rewritten. |
+| `healthy_frames`   | A frame or still marked healthy: reviewed, with no defect. Saving a defect mask on that frame clears the mark. |
 | `app_settings`     | Site key/value store. `sam_model` is `tiny` / `small` / `balanced` / `large`. |
 
-Default labels on project create: Root, Crack, Obstacle, Deposits, Deformed, Broken, Joint Displaced, Surface Damage.
+Built-in labels, used only when the catalog is empty: Root, Crack, Obstacle, Deposits, Deformed, Broken, Joint Displaced, Surface Damage. A saved catalog replaces that set for projects created afterward. Existing projects keep the labels they were created with.
 
 Disk layout under `/data`:
 
@@ -102,19 +104,20 @@ Base path `/api`.
 
 | Area | Methods | Notes |
 |------|---------|--------|
-| Projects | `GET/POST /projects`, `GET/DELETE /projects/{pid}` | Create seeds default labels |
-| Labels | `POST /projects/{pid}/labels`, `DELETE .../labels/{lid}` | 409 if label in use |
+| Projects | `GET/POST /projects`, `GET/DELETE /projects/{pid}` | Create copies the defect catalog, or the built-in set when the catalog is empty |
+| Defect labels | `GET/PUT /projects/catalog/labels` | Shared names and colors. PUT replaces the catalog. An empty list clears it |
 | Upload | `POST /projects/{pid}/media` | `multipart/form-data` field `files` |
 | Media | `GET/PATCH/DELETE /media/{mid}` | PATCH `{annotation_complete}` is videos only |
 | Frames | `GET /media/{mid}/frame/{n}`, `GET /media/{mid}/frames` | Optional `thumb=` for JPEG thumbs |
 | Project stills | `PATCH /projects/{pid}/images/complete`, `DELETE /projects/{pid}/images` | Album Done flag; delete stills only |
 | Exclude | `POST /media/{mid}/frames/{n}/exclude` | `{excluded, delete_annotations}` |
+| Healthy | `POST /media/{mid}/frames/{n}/healthy` | `{healthy}`. Marks a still or video frame as reviewed with no defect. Removes masks on that frame. |
 | Annotations | `GET /annotations/media/{mid}`, `POST /annotations/masks`, `DELETE /annotations/{id}` | Mask PNG and thumbnail JPEG endpoints |
 | Prompts | `POST /prompts/sessions`, `POST .../predict`, `DELETE .../{sid}` | SAM2 interactive mask |
 | Tracking | `POST /tracking`, `GET /tracking/{jid}`, `DELETE /tracking/{jid}` | Async job, poll ~700ms from UI |
 | Settings | `GET/POST /settings/model`, `GET /settings/model/jobs/{id}` | SAM 2.1 size catalog, cache flags, switch job with download progress |
 | Settings | `GET/POST /settings/tracking` | Tracker images-per-patch (`track_patch_size`, 2–128, default 16) |
-| Exports | `POST /exports`, `GET /exports/{jid}`, `GET /exports/{jid}/download`, `GET /exports/projects/{pid}/{fmt}` | Job-based ZIP with progress. Formats: `coco`, `yolo`, `voc`, `native` |
+| Exports | `POST /exports`, `GET /exports/{jid}`, `GET /exports/{jid}/download`, `GET /exports/projects/{pid}/{fmt}` | Job-based ZIP with progress. Formats: `coco`, `yolo`, `voc`, `native`. A frame is included when it has a saved mask or is marked healthy. Unreviewed frames stay out unless `include_unannotated` is true. |
 
 `POST /annotations/masks` body: `media_id`, `frame`, `label_id`, `mask_png_data_url`, optional `replace_annotation_id`, `source` (UI always sends `manual`).
 
