@@ -5,6 +5,18 @@ from app.core.settings import settings
 from app.services.media_service import enrich
 from app.utils.colors import ensure_unique, unique_color
 from app.utils.slugs import allocate_slug
+
+DEFAULT_DEFECT_LABELS=[
+    ('Root','#51B56D'),
+    ('Crack','#E45B5B'),
+    ('Obstacle','#F29D49'),
+    ('Deposits','#9A73E8'),
+    ('Deformed','#4FA3E3'),
+    ('Broken','#D85883'),
+    ('Joint Displaced','#D4B03D'),
+    ('Surface Damage','#5FC6B0'),
+]
+
 class ProjectService:
     def list(self):
         sql='''SELECT p.*, (SELECT COUNT(*) FROM media m WHERE m.project_id=p.id) media_count, (SELECT COUNT(*) FROM annotations a JOIN media m2 ON m2.id=a.media_id WHERE m2.project_id=p.id) annotation_count, (SELECT COALESCE(SUM(m.annotation_seconds),0) FROM media m WHERE m.project_id=p.id) annotation_seconds, (SELECT m.id FROM media m WHERE m.project_id=p.id AND (m.kind='image' OR m.extract_status='ready') ORDER BY m.id DESC LIMIT 1) cover_media_id FROM projects p ORDER BY p.updated_at DESC,p.id DESC'''
@@ -29,9 +41,7 @@ class ProjectService:
                 cur=c.execute('INSERT INTO projects(name,slug,description) VALUES (?,?,?)',(name,slug,description));pid=cur.lastrowid
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f'A project named "{name}" already exists') from exc
-            if seed_defaults:
-                defaults=[('Root','#51B56D'),('Crack','#E45B5B'),('Obstacle','#F29D49'),('Deposits','#9A73E8'),('Deformed','#4FA3E3'),('Broken','#D85883'),('Joint Displaced','#D4B03D'),('Surface Damage','#5FC6B0')]
-                c.executemany('INSERT INTO labels(project_id,name,color) VALUES (?,?,?)',[(pid,*x) for x in defaults])
+            if seed_defaults:self._seed_labels(c,pid)
         (settings.media_root/str(pid)).mkdir(parents=True,exist_ok=True);return self.get(pid)
     def get(self,ref):
         pid=self.resolve_id(ref)
@@ -39,7 +49,7 @@ class ProjectService:
             p=c.execute('SELECT * FROM projects WHERE id=?',(pid,)).fetchone()
             if not p:raise KeyError('Project not found')
             labels=[dict(x) for x in c.execute('SELECT * FROM labels WHERE project_id=? ORDER BY id',(pid,))]
-            media=[enrich(x) for x in c.execute('''SELECT m.*, (SELECT COUNT(*) FROM annotations a WHERE a.media_id=m.id) annotation_count,(SELECT COUNT(*) FROM excluded_frames e WHERE e.media_id=m.id) excluded_count FROM media m WHERE project_id=? ORDER BY id DESC''',(pid,))]
+            media=[enrich(x) for x in c.execute('''SELECT m.*, (SELECT COUNT(*) FROM annotations a WHERE a.media_id=m.id) annotation_count,(SELECT COUNT(*) FROM excluded_frames e WHERE e.media_id=m.id) excluded_count,(SELECT COUNT(*) FROM healthy_frames h WHERE h.media_id=m.id) healthy_count FROM media m WHERE project_id=? ORDER BY id DESC''',(pid,))]
             seconds=sum(int(item.get('annotation_seconds') or 0) for item in media)
             return {**dict(p),'labels':labels,'media':media,'annotation_seconds':seconds}
     def delete(self,pid):
@@ -50,6 +60,31 @@ class ProjectService:
             from pathlib import Path
             Path(row['mask_path']).unlink(missing_ok=True)
         shutil.rmtree(settings.media_root/str(pid),ignore_errors=True)
+    def defect_labels(self):
+        with db() as c:
+            rows=c.execute('SELECT name,color FROM defect_catalog ORDER BY position,id').fetchall()
+        if rows:return {'custom':True,'labels':[{'name':row['name'],'color':row['color']} for row in rows]}
+        return {'custom':False,'labels':[{'name':name,'color':color} for name,color in DEFAULT_DEFECT_LABELS]}
+    def save_defect_labels(self,labels):
+        cleaned=[];seen=set();colors=[]
+        for item in labels:
+            name=(item.get('name') or '').strip()
+            if not name:raise ValueError('Label name is required')
+            key=name.casefold()
+            if key in seen:raise ValueError('Label name already exists')
+            seen.add(key)
+            color=ensure_unique(item.get('color') or '',colors)
+            colors.append(color)
+            cleaned.append((name,color))
+        with db() as c:
+            c.execute('DELETE FROM defect_catalog')
+            if cleaned:
+                c.executemany('INSERT INTO defect_catalog(name,color,position) VALUES (?,?,?)',[(name,color,index) for index,(name,color) in enumerate(cleaned)])
+        return self.defect_labels()
+    def _seed_labels(self,conn,pid):
+        rows=conn.execute('SELECT name,color FROM defect_catalog ORDER BY position,id').fetchall()
+        labels=[(row['name'],row['color']) for row in rows] or DEFAULT_DEFECT_LABELS
+        conn.executemany('INSERT INTO labels(project_id,name,color) VALUES (?,?,?)',[(pid,name,color) for name,color in labels])
     def add_label(self,pid,name,color):
         name=name.strip()
         if not name:
