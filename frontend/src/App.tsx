@@ -1065,11 +1065,6 @@ function Workspace(){
       </aside>
       <main className="editor">
         <div className="toolbar">
-          <div className="frame-mark-group spacer" aria-hidden="true">
-            {fullFrameLabels(project.labels).map(label=>(
-              <span key={label.id} className="frame-mark"><i/>{fullFrameButton(label.name)}</span>
-            ))}
-          </div>
           <div className="toolbar-cluster">
             <div className="tool-group sam" role="group" aria-label="SAM detection">
               <span className="tool-group-label">SAM</span>
@@ -1098,15 +1093,15 @@ function Workspace(){
                 <button className="tool" onClick={()=>setZoom(z=>Math.min(2.5,z+.1))} title="Zoom in" aria-label="Zoom in">+</button>
               </div>
             </div>
-          </div>
-          <div className="frame-mark-group" role="group" aria-label="Full frame">
-            {fullFrameLabels(project.labels).map(label=>{
-              const on=frameAnns.some(ann=>ann.label_id===label.id);
-              return <button type="button" key={label.id} className={`frame-mark${on?' on':''}`} style={{'--mark':label.color} as CSSProperties} title={label.name} aria-pressed={on} disabled={busy||promptBusy} onClick={()=>void markFullFrame(label)}>
-                <i style={{background:label.color}}/>
-                {fullFrameButton(label.name)}
-              </button>;
-            })}
+            <div className="frame-mark-group" role="group" aria-label="Full frame">
+              {fullFrameLabels(project.labels).map(label=>{
+                const on=frameAnns.some(ann=>ann.label_id===label.id);
+                return <button type="button" key={label.id} className={`frame-mark${on?' on':''}`} style={{'--mark':label.color} as CSSProperties} title={label.name} aria-pressed={on} disabled={busy||promptBusy} onClick={()=>void markFullFrame(label)}>
+                  <i style={{background:label.color}}/>
+                  {fullFrameButton(label.name)}
+                </button>;
+              })}
+            </div>
           </div>
         </div>
         <div className="canvas-wrap">
