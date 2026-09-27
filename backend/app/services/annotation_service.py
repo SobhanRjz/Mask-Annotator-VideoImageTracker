@@ -28,6 +28,7 @@ class AnnotationService:
                 old=c.execute('SELECT mask_path FROM annotations WHERE id=? AND media_id=?',(replace_id,mid)).fetchone();c.execute('UPDATE annotations SET frame=?,label_id=?,mask_path=?,source=?,track_group=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND media_id=?',(frame,lid,str(path),source,track_group,replace_id,mid));aid=replace_id
             else:
                 cur=c.execute('INSERT INTO annotations(media_id,frame,label_id,mask_path,source,track_group) VALUES (?,?,?,?,?,?)',(mid,frame,lid,str(path),source,track_group));aid=cur.lastrowid
+            c.execute('DELETE FROM healthy_frames WHERE media_id=? AND frame=?',(mid,frame))
         if old:Path(old['mask_path']).unlink(missing_ok=True)
         return self.get(aid)
     def delete(self,aid):
