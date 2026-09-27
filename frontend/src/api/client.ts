@@ -1,4 +1,4 @@
-import type {Annotation,BoxPrompt,DashboardStats,ExportFormat,ExportJob,FrameInfo,Media,ModelSettings,ModelSwitchJob,Project,ProjectSummary,PromptPoint,TrackingJob,TrackingSettings} from '../types';
+import type {Annotation,BoxPrompt,DashboardStats,DefectCatalog,DefectLabel,ExportFormat,ExportJob,FrameInfo,Media,ModelSettings,ModelSwitchJob,Project,ProjectSummary,PromptPoint,TrackingJob,TrackingSettings} from '../types';
 const API='/api';
 async function req<T>(url:string,init?:RequestInit):Promise<T>{const r=await fetch(url,init);if(!r.ok){let m=`${r.status} ${r.statusText}`;try{const b=await r.json();m=b.detail??m}catch{}throw new Error(m)}return r.json() as Promise<T>}
 export const frameUrl=(mid:number,f:number,thumb?:number)=>`${API}/media/${mid}/frame/${f}${thumb?`?thumb=${thumb}`:''}`;
@@ -40,11 +40,11 @@ export const getTrackingSettings=()=>req<TrackingSettings>(`${API}/settings/trac
 export const saveTrackingSettings=(track_patch_size:number)=>req<TrackingSettings>(`${API}/settings/tracking`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_patch_size})});
 export async function uploadMedia(pid:number,files:File[]){const fd=new FormData();files.forEach(f=>fd.append('files',f));return req<Media[]>(`${API}/projects/${pid}/media`,{method:'POST',body:fd})}
 export const extractMedia=(mid:number,framesPerSecond:number)=>req<Media>(`${API}/media/${mid}/extract`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frames_per_second:framesPerSecond})});
-export const addLabel=(pid:number,name:string,color:string)=>req(`${API}/projects/${pid}/labels`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,color})});
-export const updateLabel=(pid:number,lid:number,patch:{name?:string;color?:string})=>req(`${API}/projects/${pid}/labels/${lid}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
-export const deleteLabel=(pid:number,lid:number)=>req(`${API}/projects/${pid}/labels/${lid}`,{method:'DELETE'});
+export const getDefectLabels=()=>req<DefectCatalog>(`${API}/projects/catalog/labels`);
+export const saveDefectLabels=(labels:DefectLabel[])=>req<DefectCatalog>(`${API}/projects/catalog/labels`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({labels})});
 export const getFrames=(mid:number,start=0,limit=20000)=>req<FrameInfo[]>(`${API}/media/${mid}/frames?start=${Math.max(0,start)}&limit=${limit}`);
 export const excludeFrame=(mid:number,frame:number,excluded:boolean,del=false)=>req(`${API}/media/${mid}/frames/${frame}/exclude`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({excluded,delete_annotations:del})});
+export const setFrameHealthy=(mid:number,frame:number,healthy:boolean)=>req<{frame:number;healthy:boolean;annotations_deleted:number}>(`${API}/media/${mid}/frames/${frame}/healthy`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({healthy})});
 export const deleteMedia=(mid:number)=>req(`${API}/media/${mid}`,{method:'DELETE'});
 export const setMediaComplete=(mid:number,annotation_complete:boolean)=>req<Media>(`${API}/media/${mid}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({annotation_complete})});
 export const setProjectImagesComplete=(ref:string|number,annotation_complete:boolean)=>req<{annotation_complete:boolean;updated:number}>(`${API}/projects/${ref}/images/complete`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({annotation_complete})});
