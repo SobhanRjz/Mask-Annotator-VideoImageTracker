@@ -38,6 +38,7 @@ class BackupService:
             ]
             media_ids = [row['id'] for row in media_rows]
             excluded_rows = []
+            healthy_rows = []
             annotation_rows = []
             if media_ids:
                 placeholders = ','.join('?' * len(media_ids))
@@ -45,6 +46,13 @@ class BackupService:
                     dict(row)
                     for row in conn.execute(
                         f'SELECT media_id,frame FROM excluded_frames WHERE media_id IN ({placeholders}) ORDER BY media_id,frame',
+                        media_ids,
+                    )
+                ]
+                healthy_rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        f'SELECT media_id,frame FROM healthy_frames WHERE media_id IN ({placeholders}) ORDER BY media_id,frame',
                         media_ids,
                     )
                 ]
@@ -127,6 +135,7 @@ class BackupService:
                 'labels': labels,
                 'media': media_payload,
                 'excluded_frames': excluded_rows,
+                'healthy_frames': healthy_rows,
                 'annotations': annotations_payload,
             }
             (work / 'backup.json').write_text(
@@ -269,6 +278,15 @@ class BackupService:
                 conn.execute(
                     'INSERT OR IGNORE INTO excluded_frames(media_id, frame) VALUES (?,?)',
                     (new_mid, excluded['frame']),
+                )
+
+            for healthy in payload.get('healthy_frames') or []:
+                new_mid = media_map.get(healthy['media_id'])
+                if new_mid is None:
+                    continue
+                conn.execute(
+                    'INSERT OR IGNORE INTO healthy_frames(media_id, frame) VALUES (?,?)',
+                    (new_mid, healthy['frame']),
                 )
 
             for annotation in payload.get('annotations') or []:
