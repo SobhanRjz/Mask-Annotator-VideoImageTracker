@@ -18,6 +18,10 @@ import {mediaReady,type Annotation,type BoxPrompt,type FrameInfo,type Label,type
 import {annotatedFrameCount,acceptedMaskId,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,displayIndex,filterFrames,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,strokeSendsToSam,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom,type FrameStatusFilter} from './editorWorkflow';
 import {picturesComplete,stepStill,stillFrameRows,stillIndex,stillsOf,trackCursor,trackLastIndex,trackSeedMediaId} from './mediaLibrary';
 import {projectHref} from './projectSlug';
+
+function defectLabels(labels:Label[]){return labels.filter(label=>label.kind!=='full')}
+function fullFrameLabels(labels:Label[]){return labels.filter(label=>label.kind==='full')}
+function fullFrameButton(name:string){return name==='Loss of view (CU)'?'Loss of view':name}
 import {reusedMediaNotice,reusedMediaStatus} from './uploadStatus';
 
 const loadSetting=(k:string,fallback:string)=>localStorage.getItem(k)??fallback;
@@ -110,7 +114,6 @@ function Workspace(){
   const stills=useMemo(()=>stillsOf(project?.media??[]),[project?.media]);
   const stillPos=media?stillIndex(stills,media.id):-1;
   const isStill=media?.kind==='image';
-  const currentHealthy=!!(isStill?stillFrames[media?.id??-1]?.healthy:frames.find(item=>item.frame===frame)?.healthy);
   const lastTrack=trackLastIndex(media?.kind??'video',stills.length,media?.frame_count??1);
   const trackPos=trackCursor(media?.kind??'video',stillPos,frame);
   const stillsDone=picturesComplete(stills);
@@ -216,7 +219,8 @@ function Workspace(){
   const refreshProject=async(ref:string|number)=>{
     const next=await api.getProject(ref);
     setProject(next);
-    if(labelId===null||!next.labels.some(x=>x.id===labelId))setLabelId(next.labels[0]?.id??null);
+    const defects=defectLabels(next.labels);
+    if(labelId===null||!defects.some(x=>x.id===labelId))setLabelId(defects[0]?.id??null);
     return next;
   };
 
@@ -233,7 +237,8 @@ function Workspace(){
     api.getProject(projectSlug).then(next=>{
       if(stop)return;
       setProject(next);
-      setLabelId(current=>current===null||!next.labels.some(x=>x.id===current)?next.labels[0]?.id??null:current);
+      const defects=defectLabels(next.labels);
+      setLabelId(current=>current===null||!defects.some(x=>x.id===current)?defects[0]?.id??null:current);
     }).catch(e=>{
       setError(e instanceof Error?e.message:String(e));
       navigate('/projects',{replace:true});
@@ -771,30 +776,46 @@ function Workspace(){
     finally{setDeleteBusy(false)}
   };
 
-  const markHealthy=async(healthy:boolean)=>{
+  const markFullFrame=async(label:Label)=>{
     if(!media)return;
     const targetFrame=isStill?0:frame;
-    if(healthy&&frameAnns.length&&!confirm(isStill?'Mark this image healthy and remove its defect masks?':'Mark this frame healthy and remove its defect masks?'))return;
+    const existing=frameAnns.filter(ann=>ann.label_id===label.id);
+    const others=frameAnns.filter(ann=>ann.label_id!==label.id);
+    if(!existing.length&&others.length&&!confirm(`Mark the whole ${isStill?'image':'frame'} as ${label.name} and remove its other masks?`))return;
     setBusy(true);setError(null);
     try{
       await closePromptSession();
-      await api.setFrameHealthy(media.id,targetFrame,healthy);
-      if(healthy){
-        setFrameAnns([]);
-        setOverlays([]);
-        setSelected(null);
-        setSelectedIds([]);
-        setPoints([]);
-        setBox(null);
-        canvas.current?.clearMask();
-        setDirty(false);
-        setSaveState(isStill?'Image marked healthy':'Frame marked healthy');
+      if(existing.length){
+        for(const ann of existing)await api.deleteAnnotation(ann.id);
+        setStatus(`${label.name} removed`);
+      }else{
+        await api.saveFullFrame({mediaId:media.id,frame:targetFrame,labelId:label.id});
+        setStatus(isStill?`Image marked ${label.name}`:`Frame marked ${label.name}`);
       }
+      setOverlays([]);
+      setSelected(null);
+      setSelectedIds([]);
+      setPoints([]);
+      setBox(null);
+      canvas.current?.clearMask();
+      setDirty(false);
       await refreshWorkspace(media.id,targetFrame);
       await syncProjectInfo();
-      setStatus(healthy?(isStill?'Image marked healthy':'Frame marked healthy'):'Healthy mark removed');
     }catch(e){setError(e instanceof Error?e.message:String(e))}
     finally{setBusy(false)}
+  };
+
+  const startFullTrack=async(label:Label)=>{
+    if(!media)return;
+    const from=Math.max(0,Math.min(trackFrom,lastTrack));
+    const to=Math.max(0,Math.min(target,lastTrack));
+    const seedMediaId=trackSeedMediaId(media.kind,stills,from,media.id);
+    try{
+      const job=await api.startFullTracking({mediaId:seedMediaId,labelId:label.id,startFrame:from,endFrame:to,frameStep:trackStep,replace:replaceAuto});
+      setTrackJob(job);
+      const unit=isStill?'picture':'frame';
+      setStatus(`Filling ${label.name} from ${displayIndex(from)} to ${displayIndex(to)}, whole ${unit} every ${trackStep}`);
+    }catch(e){setError(String(e))}
   };
 
   const deleteAnnotationById=(id:number)=>{requestDeleteAnnotations([id])};
@@ -945,7 +966,7 @@ function Workspace(){
 
   if(view==='projects')return <div className="page-shell product-shell">
     <AppNav onExport={()=>setShowExport(true)} exportDisabled={boot!=='ready'||!projects.length}/>
-    <ProjectsPage projects={projects} boot={boot} busy={busy} onCreate={()=>setShowProjectForm(true)} onImport={importBackup} onOpen={item=>navigate(projectHref(item))} onDelete={requestDeleteProject}/>
+    <ProjectsPage projects={projects} boot={boot} busy={busy} onCreate={()=>setShowProjectForm(true)} onImport={importBackup} onOpen={item=>navigate(projectHref(item))} onDelete={requestDeleteProject} onLabelsSaved={()=>{refreshProjects().catch(()=>{})}}/>
     {dialogs}
   </div>;
 
@@ -1044,6 +1065,11 @@ function Workspace(){
       </aside>
       <main className="editor">
         <div className="toolbar">
+          <div className="frame-mark-group spacer" aria-hidden="true">
+            {fullFrameLabels(project.labels).map(label=>(
+              <span key={label.id} className="frame-mark"><i/>{fullFrameButton(label.name)}</span>
+            ))}
+          </div>
           <div className="toolbar-cluster">
             <div className="tool-group sam" role="group" aria-label="SAM detection">
               <span className="tool-group-label">SAM</span>
@@ -1073,9 +1099,18 @@ function Workspace(){
               </div>
             </div>
           </div>
+          <div className="frame-mark-group" role="group" aria-label="Full frame">
+            {fullFrameLabels(project.labels).map(label=>{
+              const on=frameAnns.some(ann=>ann.label_id===label.id);
+              return <button type="button" key={label.id} className={`frame-mark${on?' on':''}`} style={{'--mark':label.color} as CSSProperties} title={label.name} aria-pressed={on} disabled={busy||promptBusy} onClick={()=>void markFullFrame(label)}>
+                <i style={{background:label.color}}/>
+                {fullFrameButton(label.name)}
+              </button>;
+            })}
+          </div>
         </div>
         <div className="canvas-wrap">
-          <AnnotationCanvas ref={canvas} imageUrl={api.frameUrl(media.id,frame)} points={points} box={box} tool={tool} brushSize={brushSize} zoom={zoom} disabled={promptBusy} overlays={overlays} focusedId={selected?.id??null} selectedIds={selectedIds} finished={selected!=null&&finishedIds.includes(selected.id)} finishedIds={finishedIds} labels={project.labels} labelId={labelId} showLabelMenu={dirty||!!selected} onPoint={addPoint} onBox={setPromptBox} onDirty={()=>{if(strokeSendsToSam(tool,Boolean(selected)))return;setDirty(true);setSaveState('Unsaved changes')}} onBeforeEdit={pushHistory} onBrushStroke={()=>{void finishBrushDetect()}} onSelect={(id,additive)=>{void pickMask(id,additive)}} onSelectIds={(ids,additive)=>{void pickMasks(ids,additive)}} onUnfocus={()=>{void unfocusMask()}} onLabelId={changeClass} onFinish={()=>{void finishMask()}}/>
+          <AnnotationCanvas ref={canvas} imageUrl={api.frameUrl(media.id,frame)} points={points} box={box} tool={tool} brushSize={brushSize} zoom={zoom} disabled={promptBusy} overlays={overlays} focusedId={selected?.id??null} selectedIds={selectedIds} finished={selected!=null&&finishedIds.includes(selected.id)} finishedIds={finishedIds} labels={defectLabels(project.labels)} labelId={labelId} showLabelMenu={dirty||!!selected} onPoint={addPoint} onBox={setPromptBox} onDirty={()=>{if(strokeSendsToSam(tool,Boolean(selected)))return;setDirty(true);setSaveState('Unsaved changes')}} onBeforeEdit={pushHistory} onBrushStroke={()=>{void finishBrushDetect()}} onSelect={(id,additive)=>{void pickMask(id,additive)}} onSelectIds={(ids,additive)=>{void pickMasks(ids,additive)}} onUnfocus={()=>{void unfocusMask()}} onLabelId={changeClass} onFinish={()=>{void finishMask()}}/>
         </div>
         <div className="editor-footer">
           <div className={`editor-chrome${isStill?' stills-chrome':''}`}>
@@ -1142,6 +1177,18 @@ function Workspace(){
             <label className="switch-row"><input type="checkbox" checked={replaceAuto} onChange={e=>setReplaceAuto(e.target.checked)}/><span>Replace auto</span></label>
           </div>
           <button className="primary wide" onClick={startTrack} disabled={trackJob?.status==='running'||(Math.max(0,Math.min(trackFrom,lastTrack))===trackPos&&!trackSeedIds.length)}>{trackButtonLabel(trackSeedIds.length)}</button>
+          <div className="full-track">
+            <span>Full frame</span>
+            <div>
+              {fullFrameLabels(project.labels).map(label=>(
+                <button type="button" key={label.id} className="frame-mark" style={{'--mark':label.color} as CSSProperties} title={`${label.name}. Fills the whole image. SAM2 is not used.`} disabled={trackJob?.status==='running'} onClick={()=>void startFullTrack(label)}>
+                  <i style={{background:label.color}}/>
+                  {fullFrameButton(label.name)}
+                </button>
+              ))}
+            </div>
+            <p>Fills each saved frame with the whole image. SAM2 is not used.</p>
+          </div>
           {trackJob&&<div className="job">
             <div><strong>{trackJob.status==='cancelled'?'stopped':trackJob.status}</strong><span>{trackJob.progress}%</span></div>
             <div className="progress"><i style={{width:`${trackJob.progress}%`}}/></div>
@@ -1158,7 +1205,7 @@ function Workspace(){
             <strong>{project.labels.find(label=>label.id===labelId)?.name??'No class'}</strong>
           </div>
           <div className="label-picker">
-            {project.labels.map(label=>(
+            {defectLabels(project.labels).map(label=>(
               <button type="button" key={label.id} className={`label-row-btn ${labelId===label.id?'active':''}`} onClick={()=>changeClass(label.id)}>
                 <span className="label-bar" style={{background:label.color}}/>
                 <span>{label.name}</span>
@@ -1167,7 +1214,6 @@ function Workspace(){
           </div>
           <div className="action-row">
             <button className="primary" onClick={()=>saveCurrent(false)} disabled={busy||promptBusy}>Save mask</button>
-            <button type="button" className={`healthy-toggle${currentHealthy?' on':''}`} onClick={()=>void markHealthy(!currentHealthy)} disabled={busy||promptBusy}>{currentHealthy?'Healthy':'Mark healthy'}</button>
             <button className="danger" onClick={deleteCurrentAnnotation} disabled={!selected&&!selectedIds.length}>
               {selectedIds.length>1?`Delete ${selectedIds.length}`:'Delete'}
             </button>
