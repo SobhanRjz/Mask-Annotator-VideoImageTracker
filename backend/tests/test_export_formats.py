@@ -224,6 +224,19 @@ class ExportFormatTests(unittest.TestCase):
         self.assertIn('Merged export', coco['info']['description'])
         self.assertTrue(path.name.startswith('all-projects-coco-'))
 
+    def test_healthy_frame_exports_without_a_mask(self):
+        mid = self._media(self.pid_a, 'still.jpg', 2)
+        self.conn.execute(
+            'INSERT INTO healthy_frames(media_id,frame) VALUES (?,?)',
+            (mid, 1),
+        )
+        self.conn.commit()
+        path = self._zip([self.pid_a], 'yolo', include_unannotated=False)
+        with zipfile.ZipFile(path) as archive:
+            names = [name for name in archive.namelist() if 'still' in name and name.startswith('images/')]
+        self.assertTrue(any(name.endswith('_f000001.jpg') for name in names))
+        self.assertFalse(any(name.endswith('_f000000.jpg') for name in names))
+
     def test_job_reports_progress_then_completes(self):
         from app.services.export_service import ExportService
         service = ExportService()

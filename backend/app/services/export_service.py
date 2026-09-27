@@ -236,6 +236,13 @@ class ExportService:
                             (media['id'],),
                         )
                     }
+                    healthy = {
+                        row['frame']
+                        for row in conn.execute(
+                            'SELECT frame FROM healthy_frames WHERE media_id=?',
+                            (media['id'],),
+                        )
+                    }
                     annotation_rows = conn.execute(
                         'SELECT * FROM annotations WHERE media_id=? ORDER BY frame,id',
                         (media['id'],),
@@ -260,7 +267,7 @@ class ExportService:
                         continue
 
                     frame_annotations = annotations_by_frame.get(frame, [])
-                    if not frame_annotations and not include_unannotated:
+                    if not frame_annotations and frame not in healthy and not include_unannotated:
                         continue
 
                     file_name = (
