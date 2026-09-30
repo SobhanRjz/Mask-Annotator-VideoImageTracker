@@ -15,3 +15,19 @@ export function coveragePercent(annotated:number,extracted:number){
 export function typedNameMatches(typed:string,expected:string){
   return typed.trim()===expected.trim()&&expected.trim().length>0;
 }
+
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+export function formatProjectDate(value:string|null|undefined){
+  const match=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(value||'').trim());
+  if(!match)return '';
+  const month=MONTHS[Number(match[2])-1];
+  if(!month)return '';
+  return `${Number(match[3])} ${month} ${match[1]}`;
+}
+
+export function projectBadge(annotationCount:number,date:string|null|undefined){
+  const masks=`${annotationCount} mask${annotationCount===1?'':'s'}`;
+  const when=formatProjectDate(date);
+  return when?`${masks} · ${when}`:masks;
+}
