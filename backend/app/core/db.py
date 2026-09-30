@@ -22,6 +22,9 @@ MEDIA_COLUMNS = (
     ('extract_fps', 'REAL'),
     ('frames_dir', 'TEXT'),
     ('extract_status', "TEXT NOT NULL DEFAULT 'ready'"),
+    ('extract_job_id', 'TEXT'),
+    ('extract_progress', 'INTEGER NOT NULL DEFAULT 0'),
+    ('extract_error', 'TEXT'),
     ('annotation_seconds', 'INTEGER NOT NULL DEFAULT 0'),
     ('annotation_complete', 'INTEGER NOT NULL DEFAULT 0'),
     ('content_hash', 'TEXT'),
@@ -92,7 +95,7 @@ def _migrate_project_slugs(conn: sqlite3.Connection):
 
 
 def initialize_db():
-    for p in (settings.data_root, settings.media_root, settings.mask_root, settings.export_root):
+    for p in (settings.data_root, settings.media_root, settings.mask_root, settings.export_root, settings.backup_root):
         p.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(settings.db_path)
     try:
