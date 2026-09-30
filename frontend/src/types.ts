@@ -1,13 +1,18 @@
-export type ProjectSummary={id:number;name:string;slug?:string;description:string;media_count:number;annotation_count:number;annotation_seconds?:number;cover_media_id?:number|null;created_at:string};
+export type ProjectSummary={id:number;name:string;slug?:string;description:string;media_count:number;annotation_count:number;annotation_seconds?:number;cover_media_id?:number|null;created_at:string;last_annotated_at?:string|null};
 export type Label={id:number;project_id:number;name:string;color:string;kind?:'defect'|'full'|string};
 export type DefectLabel={name:string;color:string};
 export type DefectCatalog={custom:boolean;labels:DefectLabel[]};
 export type ExtractStatus='pending'|'extracting'|'ready'|'failed'|string;
+export type ExtractionJob={
+  id:string;media_id:number;requested_fps:number;status:string;progress:number;
+  frame_count:number;error?:string|null;cancel_requested?:boolean;
+};
 export type Media={
   id:number;project_id:number;name:string;kind:'video'|'image';width:number;height:number;
   frame_count:number;fps:number;annotation_count?:number;excluded_count?:number;
   source_fps?:number;source_frame_count?:number;extract_fps?:number|null;
-  extract_status?:ExtractStatus;duration_sec?:number;frames_dir?:string|null;
+  extract_status?:ExtractStatus;extract_job_id?:string|null;extract_progress?:number;extract_error?:string|null;
+  duration_sec?:number;frames_dir?:string|null;
   annotation_seconds?:number;annotation_complete?:boolean;healthy_count?:number;
   reused?:boolean;
 };
