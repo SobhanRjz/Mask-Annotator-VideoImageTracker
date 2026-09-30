@@ -1,5 +1,6 @@
 import {useMemo,useState} from 'react';
 import * as api from '../api/client';
+import {projectBadge} from '../projectSlug';
 import type {ProjectSummary} from '../types';
 import {DefectLabelEditor} from './DefectLabelEditor';
 import {TimeChip} from './TimeChip';
@@ -51,7 +52,7 @@ export function ProjectsPage(props:{
                   ? <img src={api.frameUrl(item.cover_media_id,0,480)} alt=""/>
                   : <div className="catalog-ph">No media yet</div>}
                 <span className="catalog-slug">/{item.slug||item.id}</span>
-                <span className="catalog-count">{item.annotation_count} masks</span>
+                <span className="catalog-count">{projectBadge(item.annotation_count,item.last_annotated_at||item.created_at)}</span>
               </div>
               <div className="catalog-body">
                 <div className="catalog-title-row"><h2>{item.name}</h2><span aria-hidden="true">↗</span></div>
