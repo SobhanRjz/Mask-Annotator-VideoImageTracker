@@ -29,21 +29,19 @@ export function DashboardPage(){
     const load=async()=>{
       try{
         const next=await api.getStats();
-        if(stop)return true;
+        if(stop)return;
         setReport(next);
         setError(null);
-        return true;
       }catch(e){
-        if(!stop)setError(e instanceof Error?e.message:String(e));
-        return false;
+        if(stop)return;
+        setError(e instanceof Error?e.message:String(e));
+        timer=window.setTimeout(load,2000);
       }finally{
         if(!stop)setLoading(false);
       }
     };
-    const tick=async()=>{if(await load())window.clearInterval(timer)};
-    tick();
-    timer=window.setInterval(tick,2000);
-    return()=>{stop=true;window.clearInterval(timer)};
+    load();
+    return()=>{stop=true;window.clearTimeout(timer)};
   },[]);
 
   const coverage=coveragePercent(report?.frames_annotated??0,report?.frames_extracted??0);
