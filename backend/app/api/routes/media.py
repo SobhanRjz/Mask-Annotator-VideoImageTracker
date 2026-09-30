@@ -2,6 +2,7 @@ from fastapi import APIRouter,HTTPException,Query
 from fastapi.responses import Response
 from pydantic import BaseModel,Field
 from app.services.media_service import media_service
+from app.services.extraction_service import extraction_service
 router=APIRouter(prefix='/media',tags=['media'])
 class ExcludeIn(BaseModel):excluded:bool=True;delete_annotations:bool=False
 class HealthyIn(BaseModel):healthy:bool=True
@@ -24,9 +25,23 @@ def frame(mid:int,frame:int,thumb:int|None=Query(None)):
 def frames(mid:int,start:int=0,limit:int=40):return media_service.frames(mid,start,limit)
 @router.post('/{mid}/extract')
 def extract(mid:int,x:ExtractIn):
-    try:return media_service.extract(mid,x.frames_per_second)
+    try:return extraction_service.start(mid,x.frames_per_second)
     except KeyError as e:raise HTTPException(404,str(e))
     except ValueError as e:raise HTTPException(400,str(e))
+@router.get('/{mid}/extract/{job_id}')
+def extract_status(mid:int,job_id:str):
+    try:
+        job=extraction_service.get(job_id)
+        if int(job['media_id'])!=mid:raise KeyError('Extraction job not found')
+        return job
+    except KeyError as e:raise HTTPException(404,str(e))
+@router.delete('/{mid}/extract/{job_id}')
+def cancel_extract(mid:int,job_id:str):
+    try:
+        job=extraction_service.get(job_id)
+        if int(job['media_id'])!=mid:raise KeyError('Extraction job not found')
+        return extraction_service.cancel(job_id)
+    except KeyError as e:raise HTTPException(404,str(e))
 @router.post('/{mid}/frames/{frame}/exclude')
 def exclude(mid:int,frame:int,x:ExcludeIn):return media_service.set_excluded(mid,frame,x.excluded,x.delete_annotations)
 @router.post('/{mid}/frames/{frame}/healthy')
