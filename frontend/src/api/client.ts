@@ -1,4 +1,4 @@
-import type {Annotation,BoxPrompt,DashboardStats,DefectCatalog,DefectLabel,ExportFormat,ExportJob,FrameInfo,Media,ModelSettings,ModelSwitchJob,Project,ProjectSummary,PromptPoint,TrackingJob,TrackingSettings} from '../types';
+import type {Annotation,BoxPrompt,DashboardStats,DefectCatalog,DefectLabel,ExportFormat,ExportJob,ExtractionJob,FrameInfo,Media,ModelSettings,ModelSwitchJob,Project,ProjectSummary,PromptPoint,TrackingJob,TrackingSettings} from '../types';
 const API='/api';
 async function req<T>(url:string,init?:RequestInit):Promise<T>{const r=await fetch(url,init);if(!r.ok){let m=`${r.status} ${r.statusText}`;try{const b=await r.json();m=b.detail??m}catch{}throw new Error(m)}return r.json() as Promise<T>}
 export const frameUrl=(mid:number,f:number,thumb?:number)=>`${API}/media/${mid}/frame/${f}${thumb?`?thumb=${thumb}`:''}`;
@@ -38,8 +38,29 @@ export const switchSamModel=(key:string)=>req<ModelSwitchJob>(`${API}/settings/m
 export const modelSwitchStatus=(id:string)=>req<ModelSwitchJob>(`${API}/settings/model/jobs/${id}`);
 export const getTrackingSettings=()=>req<TrackingSettings>(`${API}/settings/tracking`);
 export const saveTrackingSettings=(track_patch_size:number)=>req<TrackingSettings>(`${API}/settings/tracking`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_patch_size})});
-export async function uploadMedia(pid:number,files:File[]){const fd=new FormData();files.forEach(f=>fd.append('files',f));return req<Media[]>(`${API}/projects/${pid}/media`,{method:'POST',body:fd})}
-export const extractMedia=(mid:number,framesPerSecond:number)=>req<Media>(`${API}/media/${mid}/extract`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frames_per_second:framesPerSecond})});
+export function uploadMedia(pid:number,files:File[],onProgress?:(loaded:number,total:number)=>void){
+  if(!onProgress){
+    const fd=new FormData();files.forEach(f=>fd.append('files',f));
+    return req<Media[]>(`${API}/projects/${pid}/media`,{method:'POST',body:fd});
+  }
+  return new Promise<Media[]>((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open('POST',`${API}/projects/${pid}/media`);
+    xhr.upload.onprogress=e=>onProgress(e.loaded,e.lengthComputable?e.total:files.reduce((sum,file)=>sum+file.size,0));
+    xhr.onerror=()=>reject(new Error('Upload failed'));
+    xhr.onload=()=>{
+      try{
+        const body=JSON.parse(xhr.responseText||'{}');
+        if(xhr.status<200||xhr.status>=300)throw new Error(body.detail??`${xhr.status} ${xhr.statusText}`);
+        resolve(body as Media[]);
+      }catch(error){reject(error)}
+    };
+    const fd=new FormData();files.forEach(f=>fd.append('files',f));xhr.send(fd);
+  });
+}
+export const extractMedia=(mid:number,framesPerSecond:number)=>req<ExtractionJob>(`${API}/media/${mid}/extract`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frames_per_second:framesPerSecond})});
+export const extractionStatus=(mid:number,jobId:string)=>req<ExtractionJob>(`${API}/media/${mid}/extract/${jobId}`);
+export const cancelExtraction=(mid:number,jobId:string)=>req<ExtractionJob>(`${API}/media/${mid}/extract/${jobId}`,{method:'DELETE'});
 export const getDefectLabels=()=>req<DefectCatalog>(`${API}/projects/catalog/labels`);
 export const saveDefectLabels=(labels:DefectLabel[])=>req<DefectCatalog>(`${API}/projects/catalog/labels`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({labels})});
 export const getFrames=(mid:number,start=0,limit=20000)=>req<FrameInfo[]>(`${API}/media/${mid}/frames?start=${Math.max(0,start)}&limit=${limit}`);
@@ -53,6 +74,7 @@ export const addAnnotationTime=(mid:number,seconds:number)=>req<{annotation_seco
 export const listAnnotations=(mid:number,frame?:number,limit=500)=>req<Annotation[]>(`${API}/annotations/media/${mid}?${frame===undefined?'':`frame=${frame}&`}limit=${limit}`);
 export async function getMaskBlob(id:number){const r=await fetch(annotationMaskUrl(id));if(!r.ok)throw new Error('Cannot load mask');return r.blob()}
 export const deleteAnnotation=(id:number)=>req(`${API}/annotations/${id}`,{method:'DELETE'});
+export const clearFrameAnnotations=(mediaId:number,frames:number[])=>req<{deleted:number;frames:number[]}>(`${API}/annotations/media/${mediaId}/frames`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({frames})});
 export const saveMask=(x:{mediaId:number;frame:number;labelId:number;maskDataUrl:string;replaceId?:number|null;source?:string})=>req<Annotation>(`${API}/annotations/masks`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_id:x.mediaId,frame:x.frame,label_id:x.labelId,mask_png_data_url:x.maskDataUrl,replace_annotation_id:x.replaceId??null,source:x.source??'manual'})});
 export const createPrompt=(mid:number,frame:number,aid?:number|null)=>req<{session_id:string;width:number;height:number}>(`${API}/prompts/sessions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_id:mid,frame,annotation_id:aid??null})});
 export const closePrompt=(sid:string)=>fetch(`${API}/prompts/sessions/${sid}`,{method:'DELETE'});
