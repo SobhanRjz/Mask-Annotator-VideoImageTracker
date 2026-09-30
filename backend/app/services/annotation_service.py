@@ -35,6 +35,25 @@ class AnnotationService:
         a=self.get(aid)
         with db() as c:c.execute('DELETE FROM annotations WHERE id=?',(aid,))
         Path(a['mask_path']).unlink(missing_ok=True)
+    def clear_frames(self,mid,frames):
+        selected=sorted({int(frame) for frame in frames})
+        if not selected:return {'deleted':0,'frames':[]}
+        placeholders=','.join('?'*len(selected))
+        with db() as c:
+            rows=c.execute(
+                f'''SELECT id,mask_path FROM annotations
+                    WHERE media_id=? AND frame IN ({placeholders})''',
+                [mid,*selected],
+            ).fetchall()
+            if rows:
+                c.execute(
+                    f'''DELETE FROM annotations
+                        WHERE media_id=? AND frame IN ({placeholders})''',
+                    [mid,*selected],
+                )
+        for row in rows:
+            Path(row['mask_path']).unlink(missing_ok=True)
+        return {'deleted':len(rows),'frames':selected}
     def delete_auto_range(self,mid,lid,a,b,exclude_id=None,exclude_ids=None):
         lo,hi=sorted((a,b));args=[mid,lid,'auto',lo,hi];q='SELECT id,mask_path FROM annotations WHERE media_id=? AND label_id=? AND source=? AND frame BETWEEN ? AND ?'
         excluded=[]
