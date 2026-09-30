@@ -97,7 +97,11 @@ annotator.db
 media/{project_id}/{uuid}{ext}
 masks/{media_id}/{uuid}.png
 exports/{project-name}-{fmt}-{token}.zip
+backups/YYYY-MM-DD/manifest.json
+backups/YYYY-MM-DD/masks/{annotation_id}.png
 ```
+
+Daily incremental annotation backups run in the backend (startup, then every 30 minutes). A day folder is written only when at least one new or updated mask exists since the last cursor. Compose bind-mounts `./backups` to `/data/backups` so the files land on the host.
 
 ## API map
 
