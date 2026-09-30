@@ -5,9 +5,19 @@ export function MaskHeatmap(props:{values:number[][]}){
   useEffect(()=>{
     const node=canvas.current;
     const grid=props.values;
-    if(!node||!grid.length||!grid[0]?.length)return;
+    if(!node)return;
+    if(!grid.length||!grid[0]?.length){
+      node.width=1;
+      node.height=1;
+      return;
+    }
     const height=grid.length;
     const width=grid[0].length;
+    if(grid.some(row=>row.length!==width)){
+      node.width=1;
+      node.height=1;
+      return;
+    }
     node.width=width;
     node.height=height;
     const ctx=node.getContext('2d');
