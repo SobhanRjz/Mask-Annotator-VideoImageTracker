@@ -21,6 +21,7 @@ function formatPixels(value:number){
 export function DashboardPage(){
   const [report,setReport]=useState<DashboardStats|null>(null);
   const [error,setError]=useState<string|null>(null);
+  const [loading,setLoading]=useState(true);
   const [heatFilter,setHeatFilter]=useState('all');
   useEffect(()=>{
     let stop=false;
@@ -35,6 +36,8 @@ export function DashboardPage(){
       }catch(e){
         if(!stop)setError(e instanceof Error?e.message:String(e));
         return false;
+      }finally{
+        if(!stop)setLoading(false);
       }
     };
     const tick=async()=>{if(await load())window.clearInterval(timer)};
@@ -62,12 +65,18 @@ export function DashboardPage(){
         <Link className="primary dash-continue" to={continueHref(report?.continue)}><span>Continue annotation</span><b aria-hidden="true">→</b></Link>
       </section>
 
+      {loading&&!report&&<div className="empty-state dash-empty">
+        <h2>Loading dashboard</h2>
+        <p>Reading annotation statistics…</p>
+      </div>}
+
       {error&&!report&&<div className="empty-state dash-empty">
         <h2>Waiting for backend</h2>
         <p>{error}</p>
       </div>}
 
       {report&&<>
+        {error&&<div className="dashboard-notice">{error} Showing the last successful report.</div>}
         <section className="kpi-grid">
           <article className="kpi-card kpi-accent-blue">
             <div className="kpi-label"><i aria-hidden="true"/><span>Extracted frames</span></div>
