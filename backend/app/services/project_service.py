@@ -23,7 +23,7 @@ DEFAULT_DEFECT_LABELS=[
 
 class ProjectService:
     def list(self):
-        sql='''SELECT p.*, (SELECT COUNT(*) FROM media m WHERE m.project_id=p.id) media_count, (SELECT COUNT(*) FROM annotations a JOIN media m2 ON m2.id=a.media_id WHERE m2.project_id=p.id) annotation_count, (SELECT COALESCE(SUM(m.annotation_seconds),0) FROM media m WHERE m.project_id=p.id) annotation_seconds, (SELECT m.id FROM media m WHERE m.project_id=p.id AND (m.kind='image' OR m.extract_status='ready') ORDER BY m.id DESC LIMIT 1) cover_media_id FROM projects p ORDER BY p.updated_at DESC,p.id DESC'''
+        sql='''SELECT p.*, (SELECT COUNT(*) FROM media m WHERE m.project_id=p.id) media_count, (SELECT COUNT(*) FROM annotations a JOIN media m2 ON m2.id=a.media_id WHERE m2.project_id=p.id) annotation_count, (SELECT COALESCE(SUM(m.annotation_seconds),0) FROM media m WHERE m.project_id=p.id) annotation_seconds, (SELECT MAX(COALESCE(a.updated_at, a.created_at)) FROM annotations a JOIN media m2 ON m2.id=a.media_id WHERE m2.project_id=p.id) last_annotated_at, (SELECT m.id FROM media m WHERE m.project_id=p.id AND (m.kind='image' OR m.extract_status='ready') ORDER BY m.id DESC LIMIT 1) cover_media_id FROM projects p ORDER BY p.updated_at DESC,p.id DESC'''
         with db() as c:return [dict(r) for r in c.execute(sql)]
     def resolve_id(self,ref):
         text=str(ref).strip()

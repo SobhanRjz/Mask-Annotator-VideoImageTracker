@@ -56,6 +56,21 @@ class AnnotationTimeTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             media_service.add_annotation_seconds(99999, 5)
 
+    def test_project_list_includes_last_annotation_day(self):
+        from app.services.project_service import project_service
+        empty = project_service.list()[0]
+        self.assertIsNone(empty.get('last_annotated_at'))
+        self.assertTrue(empty.get('created_at'))
+        lid = self.conn.execute('SELECT id FROM labels WHERE project_id=?', (self.pid,)).fetchone()['id']
+        self.conn.execute(
+            '''INSERT INTO annotations(media_id,frame,label_id,mask_path,source,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?)''',
+            (self.mid, 0, lid, 'mask.png', 'manual', '2026-09-30 08:15:00', '2026-09-30 08:15:00'),
+        )
+        self.conn.commit()
+        listed = project_service.list()[0]
+        self.assertTrue(str(listed['last_annotated_at']).startswith('2026-09-30'))
+
 
 if __name__ == '__main__':
     unittest.main()
