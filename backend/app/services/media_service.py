@@ -25,6 +25,9 @@ def enrich(row) -> dict:
     media['duration_sec'] = duration_seconds(source_count, source_fps)
     media['extract_fps'] = media.get('extract_fps')
     media['extract_status'] = media.get('extract_status') or 'ready'
+    media['extract_job_id'] = media.get('extract_job_id')
+    media['extract_progress'] = int(media.get('extract_progress') or 0)
+    media['extract_error'] = media.get('extract_error')
     media['frames_dir'] = media.get('frames_dir')
     media['annotation_seconds'] = int(media.get('annotation_seconds') or 0)
     media['annotation_complete'] = bool(int(media.get('annotation_complete') or 0))
@@ -164,7 +167,7 @@ class MediaService:
                 except sqlite3.IntegrityError:
                     continue
 
-    def extract(self, mid, frames_per_second: float):
+    def extract(self, mid, frames_per_second: float, progress=None, job_id=None):
         media = self.get(mid)
         if media['kind'] != 'video':
             raise ValueError('Only videos need frame extraction')
@@ -174,32 +177,74 @@ class MediaService:
             raise ValueError('Video has no readable frames')
         extract_fps = clamp_extract_fps(source_fps, frames_per_second)
         frames_dir = Path(media['path']).parent / f'{mid}_frames'
-        if frames_dir.exists():
-            shutil.rmtree(frames_dir, ignore_errors=True)
-        frames_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir = Path(media['path']).parent / f'{mid}_frames.{job_id or uuid.uuid4().hex}.tmp'
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        temp_dir.mkdir(parents=True, exist_ok=True)
         with db() as conn:
             conn.execute(
-                "UPDATE media SET extract_status='extracting', extract_fps=? WHERE id=?",
-                (extract_fps, mid),
+                """UPDATE media
+                   SET extract_status='extracting', extract_fps=?,
+                       extract_job_id=?, extract_progress=0, extract_error=NULL
+                   WHERE id=?""",
+                (extract_fps, job_id, mid),
             )
         try:
-            extracted = extract_jpegs(media['path'], frames_dir, extract_fps)
-        except Exception:
-            shutil.rmtree(frames_dir, ignore_errors=True)
+            from app.services.extraction_service import parse_progress
+            last_progress = 0
+
+            def report(output, duration):
+                nonlocal last_progress
+                percent = parse_progress(output, duration)
+                if percent <= last_progress:
+                    return
+                last_progress = percent
+                with db() as conn:
+                    conn.execute(
+                        'UPDATE media SET extract_progress=? WHERE id=?',
+                        (percent, mid),
+                    )
+                if progress:
+                    progress(percent)
+
+            extracted = extract_jpegs(
+                media['path'],
+                temp_dir,
+                extract_fps,
+                progress=report,
+                duration=media.get('duration_sec') or duration_seconds(source_count, source_fps),
+            )
+        except Exception as exc:
+            shutil.rmtree(temp_dir, ignore_errors=True)
             with db() as conn:
-                conn.execute("UPDATE media SET extract_status='failed' WHERE id=?", (mid,))
+                conn.execute(
+                    """UPDATE media
+                       SET extract_status='failed', extract_job_id=?,
+                           extract_progress=0, extract_error=?
+                       WHERE id=?""",
+                    (job_id, str(exc), mid),
+                )
             raise
         if extracted <= 0:
-            shutil.rmtree(frames_dir, ignore_errors=True)
+            shutil.rmtree(temp_dir, ignore_errors=True)
             with db() as conn:
-                conn.execute("UPDATE media SET extract_status='failed' WHERE id=?", (mid,))
+                conn.execute(
+                    """UPDATE media
+                       SET extract_status='failed', extract_job_id=?,
+                           extract_progress=0, extract_error=?
+                       WHERE id=?""",
+                    (job_id, 'Could not extract any frames from this video', mid),
+                )
             raise ValueError('Could not extract any frames from this video')
+        shutil.rmtree(frames_dir, ignore_errors=True)
+        temp_dir.replace(frames_dir)
         with db() as conn:
             conn.execute(
                 '''UPDATE media
-                   SET frame_count=?, fps=?, extract_fps=?, frames_dir=?, extract_status='ready'
+                   SET frame_count=?, fps=?, extract_fps=?, frames_dir=?,
+                       extract_status='ready', extract_job_id=?, extract_progress=100,
+                       extract_error=NULL
                    WHERE id=?''',
-                (extracted, extract_fps, extract_fps, str(frames_dir), mid),
+                (extracted, extract_fps, extract_fps, str(frames_dir), job_id, mid),
             )
             return self._load(mid, conn)
 
