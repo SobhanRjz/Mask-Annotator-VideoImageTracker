@@ -46,6 +46,32 @@ export function mergeSelection(current:number[],next:number[],additive:boolean){
   return [...ids];
 }
 
+export type BoxRect={left:number;top:number;right:number;bottom:number};
+
+export function normalizeBoxRect(x0:number,y0:number,x1:number,y1:number):BoxRect{
+  return {left:Math.min(x0,x1),top:Math.min(y0,y1),right:Math.max(x0,x1),bottom:Math.max(y0,y1)};
+}
+
+export function boxRectsIntersect(a:BoxRect,b:BoxRect){
+  return a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
+}
+
+export function mergeFrameKeys(current:string[],next:string[],additive:boolean){
+  if(!additive)return [...next];
+  const keys=new Set(current);
+  for(const key of next)keys.add(key);
+  return [...keys];
+}
+
+export function frameKeysInMarquee(box:BoxRect,items:{key:string;rect:BoxRect}[]){
+  return items.filter(item=>boxRectsIntersect(box,item.rect)).map(item=>item.key);
+}
+
+export function frameMarqueeSelection(current:string[],hitKeys:string[],additive:boolean){
+  if(!hitKeys.length&&!additive)return [];
+  return mergeFrameKeys(current,hitKeys,additive);
+}
+
 export function idsToDelete(selectedIds:number[],selectedId:number|null){
   if(selectedIds.length)return [...selectedIds];
   return selectedId==null?[]:[selectedId];
@@ -148,6 +174,14 @@ export function clampMenuPos(left:number,top:number,wrapW:number,wrapH:number,me
 
 export function acceptedMaskId(staleSelectedId:number|null,savedId:number|null|undefined){
   return savedId??staleSelectedId;
+}
+
+export function shouldCommitOnLeave(dirty:boolean,hasCurrentMask:boolean){
+  return dirty||hasCurrentMask;
+}
+
+export function markAccepted(finishedIds:number[],id:number){
+  return finishedIds.includes(id)?finishedIds:[...finishedIds,id];
 }
 
 export function paintOverlayCopy(overlayId:number,focusedId:number|null){

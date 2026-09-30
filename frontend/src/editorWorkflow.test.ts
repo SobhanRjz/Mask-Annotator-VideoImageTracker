@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {acceptedMaskId,annotatedFrameCount,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,closeSessionAfterPredict,displayIndex,escapeUnfocusesMasks,filterFrames,fitScale,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,paintOverlayCopy,panBy,parseTrackPatch,selectDragStartsBox,selectDragStartsMarquee,selectEmptyRelease,strokeSendsToSam,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom} from './editorWorkflow.ts';
+import {acceptedMaskId,annotatedFrameCount,boxRectsIntersect,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,clampMenuPos,clickOutsideUnfocuses,closeSessionAfterPredict,displayIndex,escapeUnfocusesMasks,filterFrames,fitScale,frameKeysInMarquee,frameMarqueeSelection,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,markAccepted,maskUrlForPrompt,mergeFrameKeys,mergeSelection,normalizeBoxRect,paintOverlayCopy,panBy,parseTrackPatch,selectDragStartsBox,selectDragStartsMarquee,selectEmptyRelease,shouldCommitOnLeave,strokeSendsToSam,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom} from './editorWorkflow.ts';
 
 test('a generated mask stays on the same prompt tool',()=>{
   assert.equal(toolAfterGeneratedMask('positive'),'positive');
@@ -66,6 +66,21 @@ test('a click on empty canvas unfocuses; a drag is a selection marquee',()=>{
 test('shift-marquee adds ids; a plain marquee replaces the set',()=>{
   assert.deepEqual(mergeSelection([1,2],[3,4],false),[3,4]);
   assert.deepEqual(mergeSelection([1,2],[2,3],true),[1,2,3]);
+});
+
+test('frame marquee picks intersecting thumbnails and merges selection',()=>{
+  const box=normalizeBoxRect(0,0,50,50);
+  const items=[
+    {key:'1:0',rect:{left:0,top:0,right:40,bottom:40}},
+    {key:'1:1',rect:{left:60,top:0,right:100,bottom:40}},
+    {key:'1:2',rect:{left:10,top:10,right:30,bottom:30}},
+  ];
+  assert.deepEqual(frameKeysInMarquee(box,items),['1:0','1:2']);
+  assert.equal(boxRectsIntersect(box,items[1].rect),false);
+  assert.deepEqual(mergeFrameKeys(['1:9'],['1:0','1:2'],false),['1:0','1:2']);
+  assert.deepEqual(mergeFrameKeys(['1:9'],['1:0','1:2'],true),['1:9','1:0','1:2']);
+  assert.deepEqual(frameMarqueeSelection(['1:9'],[],false),[]);
+  assert.deepEqual(frameMarqueeSelection(['1:9'],[],true),['1:9']);
 });
 
 test('delete uses the multi-selection, or the focused mask when nothing else is selected',()=>{
@@ -174,6 +189,14 @@ test('accepting a new detection uses the saved id even when selected is still nu
   assert.equal(acceptedMaskId(null,41),41);
   assert.equal(acceptedMaskId(7,7),7);
   assert.equal(acceptedMaskId(7,undefined),7);
+});
+
+test('leaving a picture with a mask saves and accepts instead of toggling finished off',()=>{
+  assert.equal(shouldCommitOnLeave(true,false),true);
+  assert.equal(shouldCommitOnLeave(false,true),true);
+  assert.equal(shouldCommitOnLeave(false,false),false);
+  assert.deepEqual(markAccepted([3],9),[3,9]);
+  assert.deepEqual(markAccepted([9],9),[9]);
 });
 
 test('a focused overlay is not painted again on top of the live mask',()=>{
