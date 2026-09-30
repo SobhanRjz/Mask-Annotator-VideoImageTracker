@@ -10,9 +10,12 @@ from app.services.sam2_runtime import sam2_runtime
 async def lifespan(app:FastAPI):
     initialize_db()
     from app.services.project_service import project_service
+    from app.services.daily_backup_service import daily_backup_scheduler
     project_service.sync_projects()
     threading.Thread(target=sam2_runtime.initialize,name='sam2-init',daemon=True).start()
+    daily_backup_scheduler.start()
     yield
+    daily_backup_scheduler.shutdown()
     sam2_runtime.shutdown()
 app=FastAPI(title='Sewer SAM2 Annotator API',version='2.0.0',lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=[settings.frontend_origin,'http://localhost:8092'],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
