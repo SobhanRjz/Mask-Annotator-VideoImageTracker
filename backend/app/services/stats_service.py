@@ -5,9 +5,8 @@ from PIL import Image
 
 from app.core.db import db
 from app.utils.cluster import kmeans_1d
-from app.utils.images import load_mask
-
 HEATMAP_SIZE = 64
+MAX_MASK_PIXELS = 64_000_000
 
 
 def _ready_clause():
@@ -42,9 +41,11 @@ class StatsService:
                 for row in conn.execute(
                     '''SELECT l.name, MIN(l.color) color, COUNT(*) count
                        FROM annotations a
+                       JOIN media m ON m.id = a.media_id
                        JOIN labels l ON l.id = a.label_id
+                       WHERE {ready}
                        GROUP BY l.name
-                       ORDER BY count DESC, l.name'''
+                       ORDER BY count DESC, l.name'''.format(ready=_ready_clause())
                 )
             ]
             mask_rows = list(
@@ -183,19 +184,22 @@ class StatsService:
             if not path.is_file():
                 continue
             try:
-                mask = load_mask(path)
+                with Image.open(path) as image:
+                    if image.width * image.height > MAX_MASK_PIXELS:
+                        continue
+                    gray = image.convert('L')
+                    area = sum(gray.histogram()[128:])
+                    if area <= 0:
+                        continue
+                    resized = np.asarray(
+                        gray.resize(
+                            (HEATMAP_SIZE, HEATMAP_SIZE),
+                            Image.Resampling.BILINEAR,
+                        )
+                    )
             except Exception:
                 continue
-            area = int(np.count_nonzero(mask))
-            if area <= 0:
-                continue
-            areas.append(area)
-            resized = np.asarray(
-                Image.fromarray(mask.astype(np.uint8) * 255, 'L').resize(
-                    (HEATMAP_SIZE, HEATMAP_SIZE),
-                    Image.BILINEAR,
-                )
-            )
+            areas.append(int(area))
             occupied = resized > 16
             acc_all += occupied
             label = row['label_name'] or 'Unknown'
