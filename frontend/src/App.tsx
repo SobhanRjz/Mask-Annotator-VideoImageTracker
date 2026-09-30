@@ -1,4 +1,4 @@
-import {useEffect,useMemo,useRef,useState,type CSSProperties,type ReactNode} from 'react';
+import {useEffect,useMemo,useRef,useState,type CSSProperties,type PointerEvent as ReactPointerEvent,type ReactNode} from 'react';
 import {Navigate,Outlet,Route,Routes,useLocation,useNavigate,useParams} from 'react-router-dom';
 import * as api from './api/client';
 import {AnnotationCanvas,type AnnotationCanvasHandle,type MaskOverlay} from './components/AnnotationCanvas';
@@ -14,14 +14,17 @@ import {DoneCheck,ProjectWorkspace} from './components/ProjectWorkspace';
 import {ProjectsPage} from './components/ProjectsPage';
 import {SettingsPage} from './components/SettingsPage';
 import {TimeChip} from './components/TimeChip';
-import {mediaReady,type Annotation,type BoxPrompt,type FrameInfo,type Label,type Media,type Project,type ProjectSummary,type PromptPoint,type ToolMode,type TrackingJob} from './types';
-import {annotatedFrameCount,acceptedMaskId,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,displayIndex,filterFrames,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,maskUrlForPrompt,mergeSelection,strokeSendsToSam,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom,type FrameStatusFilter} from './editorWorkflow';
+import {mediaReady,type Annotation,type BoxPrompt,type ExtractionJob,type FrameInfo,type Label,type Media,type Project,type ProjectSummary,type PromptPoint,type ToolMode,type TrackingJob} from './types';
+import {annotatedFrameCount,acceptedMaskId,boxStartsNewInstance,brushBoundsToBox,brushStrokeUsesDetection,closeSessionAfterPredict,displayIndex,filterFrames,frameKeysInMarquee,frameMarqueeSelection,fromDisplayIndex,idsToDelete,idsToDropOnUndo,idsToTrack,keepPromptsAfterPredict,markAccepted,maskUrlForPrompt,mergeSelection,normalizeBoxRect,selectEmptyRelease,shouldCommitOnLeave,strokeSendsToSam,toggleSelection,toolAfterGeneratedMask,trackButtonLabel,trackSeedsMatchFrom,type BoxRect,type FrameStatusFilter} from './editorWorkflow';
 import {picturesComplete,stepStill,stillFrameRows,stillIndex,stillsOf,trackCursor,trackLastIndex,trackSeedMediaId} from './mediaLibrary';
 import {projectHref} from './projectSlug';
+import {completedExtractBatchStatus,extractDialogVisible,extractionBatchFinished,extractionJobsActive,mergeExtractionJobs} from './extractWorkflow';
+import {UploadProgressDialog,type UploadProgressRow} from './components/UploadProgressDialog';
 
 function defectLabels(labels:Label[]){return labels.filter(label=>label.kind!=='full')}
 function fullFrameLabels(labels:Label[]){return labels.filter(label=>label.kind==='full')}
 function fullFrameButton(name:string){return name==='Loss of view (CU)'?'Loss of view':name}
+function frameSelectionKey(mediaId:number,frame:number){return `${mediaId}:${frame}`}
 import {reusedMediaNotice,reusedMediaStatus} from './uploadStatus';
 
 const loadSetting=(k:string,fallback:string)=>localStorage.getItem(k)??fallback;
@@ -82,9 +85,13 @@ function Workspace(){
   const [showProjectForm,setShowProjectForm]=useState(false);
   const [showExport,setShowExport]=useState(false);
   const [extractQueue,setExtractQueue]=useState<Media[]>([]);
+  const [extractionJobs,setExtractionJobs]=useState<Record<number,ExtractionJob>>({});
+  const extractionJobsRef=useRef<Record<number,ExtractionJob>>({});
+  const [uploadRows,setUploadRows]=useState<UploadProgressRow[]>([]);
   const [boot,setBoot]=useState<'loading'|'waiting'|'ready'>('loading');
   const [overlays,setOverlays]=useState<MaskOverlay[]>([]);
   const [selectedIds,setSelectedIds]=useState<number[]>([]);
+  const [selectedFrameKeys,setSelectedFrameKeys]=useState<string[]>([]);
   const [finishedIds,setFinishedIds]=useState<number[]>([]);
   const [frameAnns,setFrameAnns]=useState<Annotation[]>([]);
   const [spent,setSpent]=useState(0);
@@ -92,6 +99,7 @@ function Workspace(){
   const [canRedo,setCanRedo]=useState(false);
   const [pendingDelete,setPendingDelete]=useState<
     | {kind:'annotations';ids:number[];title:string;hint:string}
+    | {kind:'frames';items:{mediaId:number;frame:number}[];title:string;hint:string}
     | {kind:'project';ref:string|number;name:string}
     | {kind:'stills';count:number}
     | null
@@ -103,6 +111,7 @@ function Workspace(){
   const [frameLabelIds,setFrameLabelIds]=useState<number[]>([]);
   const [stillFrames,setStillFrames]=useState<Record<number,FrameInfo>>({});
   const pendingStillEdit=useRef<number|null>(null);
+  const commitMaskOnLeaveRef=useRef<()=>Promise<void>>(async()=>{});
   const historyPast=useRef<{mask:string|null;labelId:number|null;selected:Annotation|null;points:PromptPoint[];box:BoxPrompt|null;annIds:number[]}[]>([]);
   const historyFuture=useRef<{mask:string|null;labelId:number|null;selected:Annotation|null;points:PromptPoint[];box:BoxPrompt|null;annIds:number[]}[]>([]);
   const editorRef=useRef({labelId:null as number|null,selected:null as Annotation|null,points:[] as PromptPoint[],box:null as BoxPrompt|null});
@@ -344,23 +353,31 @@ function Workspace(){
 
   const gotoFrame=async(nextFrame:number)=>{
     if(!media)return;
-    await closePromptSession();
     const n=Math.max(0,Math.min(nextFrame,Math.max(0,media.frame_count-1)));
+    if(n===frame)return;
+    await commitMaskOnLeaveRef.current();
+    await closePromptSession();
     setFrame(n);
     setTrackFrom(n);
     resetEditor();
   };
 
-  const gotoStillAt=(index:number)=>{
+  const gotoStillAt=async(index:number)=>{
     if(!project||!media||media.kind!=='image')return;
     const next=stills[Math.max(0,Math.min(index,Math.max(0,stills.length-1)))];
-    if(next&&next.id!==media.id)navigate(projectHref(project,`/media/${next.id}`));
+    if(next&&next.id!==media.id){
+      await commitMaskOnLeaveRef.current();
+      navigate(projectHref(project,`/media/${next.id}`));
+    }
   };
 
-  const gotoStill=(delta:number)=>{
+  const gotoStill=async(delta:number)=>{
     if(!project||!media||media.kind!=='image')return;
     const next=stepStill(stills,media.id,delta);
-    if(next&&next.id!==media.id)navigate(projectHref(project,`/media/${next.id}`));
+    if(next&&next.id!==media.id){
+      await commitMaskOnLeaveRef.current();
+      navigate(projectHref(project,`/media/${next.id}`));
+    }
   };
 
   const ensurePrompt=async(annotationId?:number|null)=>{
@@ -538,6 +555,17 @@ function Workspace(){
     finally{saveInFlight.current=null}
   };
 
+  commitMaskOnLeaveRef.current=async()=>{
+    const hasMask=Boolean(selected)||Boolean(canvas.current?.exportMaskDataUrl());
+    if(!shouldCommitOnLeave(dirty,hasMask))return;
+    let id=selected?.id??null;
+    if(dirty){
+      const ann=await saveCurrent(true);
+      id=acceptedMaskId(id,ann?.id);
+    }
+    if(id!=null)setFinishedIds(ids=>markAccepted(ids,id));
+  };
+
   useEffect(()=>{
     if(!autoSave||view!=='annotate')return;
     const ms=Math.max(1,autoSaveSec)*1000;
@@ -565,6 +593,7 @@ function Workspace(){
 
   useEffect(()=>{setSpent(media?.annotation_seconds??0)},[media?.id]);
   useEffect(()=>{setFrameStatus('all');setFrameLabelIds([])},[project?.id,filterScope]);
+  useEffect(()=>{setSelectedFrameKeys([])},[project?.id,media?.id]);
 
   useEffect(()=>{
     if(view!=='annotate'||!media)return;
@@ -662,12 +691,29 @@ function Workspace(){
 
   const upload=async(files:FileList|null)=>{
     if(!project||!files?.length)return;
+    const selectedFiles=Array.from(files);
+    setUploadRows(selectedFiles.map(file=>({name:file.name,loaded:0,total:file.size,status:'queued'})));
     setBusy(true);
+    const uploaded:Media[]=[];
     try{
-      const uploaded=await api.uploadMedia(project.id,Array.from(files));
+      for(const file of selectedFiles){
+        setUploadRows(rows=>rows.map(row=>row.name===file.name?{...row,status:'uploading'}:row));
+        try{
+          const items=await api.uploadMedia(project.id,[file],(loaded,total)=>{
+            setUploadRows(rows=>rows.map(row=>row.name===file.name?{...row,loaded,total}:row));
+          });
+          uploaded.push(...items);
+          setUploadRows(rows=>rows.map(row=>row.name===file.name?{...row,loaded:file.size,total:file.size,status:'complete'}:row));
+        }catch(error){
+          const message=error instanceof Error?error.message:String(error);
+          setUploadRows(rows=>rows.map(row=>row.name===file.name?{...row,status:'failed',error:message}:row));
+          setError(message);
+        }
+      }
+      if(!uploaded.length)return;
       await refreshProject(project.id);
       const pending=uploaded.filter(item=>item.kind==='video'&&!mediaReady(item)&&!item.reused);
-      if(pending.length)setExtractQueue(queue=>[...queue,...pending]);
+      if(pending.length)setExtractQueue(queue=>[...queue,...pending.filter(item=>!queue.some(existing=>existing.id===item.id))]);
       const reused=uploaded.some(item=>item.reused);
       if(pending.length&&!reused)setStatus('Choose how many frames to extract per second');
       else if(pending.length)setStatus(`${reusedMediaStatus(uploaded)} Choose extract rate for new videos.`);
@@ -678,18 +724,55 @@ function Workspace(){
     finally{setBusy(false)}
   };
 
-  const runExtract=async(framesPerSecond:number)=>{
-    const current=extractQueue[0];
-    if(!current||!project)return;
-    setBusy(true);setError(null);
+  const runExtract=async(rates:Record<number,number>)=>{
+    if(!project||!extractQueue.length)return;
+    setBusy(true);setError(null);setReusedNotice(null);setUploadRows([]);
     try{
-      await api.extractMedia(current.id,framesPerSecond);
-      await refreshProject(project.id);
-      setExtractQueue(queue=>queue.slice(1));
-      setStatus(`Extracted frames from ${current.name}`);
+      for(const item of extractQueue){
+        const job=await api.extractMedia(item.id,rates[item.id]??1);
+        extractionJobsRef.current={...extractionJobsRef.current,[item.id]:job};
+        setExtractionJobs(extractionJobsRef.current);
+      }
+      setStatus(`Extracting ${extractQueue.length} video${extractQueue.length===1?'':'s'}…`);
     }catch(e){setError(e instanceof Error?e.message:String(e))}
     finally{setBusy(false)}
   };
+
+  const extractRunning=extractionJobsActive(extractionJobs);
+  useEffect(()=>{
+    if(!extractRunning)return;
+    let stop=false;
+    let inflight=false;
+    const tick=async()=>{
+      if(inflight)return;
+      const jobs=Object.values(extractionJobsRef.current);
+      if(!jobs.length)return;
+      inflight=true;
+      try{
+        const next=await Promise.all(jobs.map(job=>api.extractionStatus(job.media_id,job.id)));
+        if(stop)return;
+        const merged=mergeExtractionJobs(extractionJobsRef.current,next);
+        extractionJobsRef.current=merged;
+        setExtractionJobs(merged);
+        if(!extractionBatchFinished(next,merged))return;
+        setExtractQueue([]);
+        extractionJobsRef.current={};
+        setExtractionJobs({});
+        if(project)await refreshProject(project.slug||project.id);
+        if(stop)return;
+        const list=Object.values(merged);
+        const failed=list.find(job=>job.status==='failed');
+        if(failed?.error){
+          setError(failed.error);
+        }
+        setStatus(completedExtractBatchStatus(list));
+      }catch(e){if(!stop)setError(e instanceof Error?e.message:String(e))}
+      finally{inflight=false}
+    };
+    void tick();
+    const id=window.setInterval(()=>{void tick()},700);
+    return()=>{stop=true;window.clearInterval(id)};
+  },[extractRunning,project?.id]);
 
   const requestDeleteAnnotations=(ids:number[])=>{
     const unique=[...new Set(ids)];
@@ -700,6 +783,29 @@ function Workspace(){
       ids:unique,
       title:n===1?'Delete annotation':`Delete ${n} annotations`,
       hint:n===1?'This mask will be removed from the current frame.':`${n} selected masks will be removed from this frame.`,
+    });
+  };
+
+  const toggleFrameSelection=(targetMediaId:number,targetFrame:number)=>{
+    const key=frameSelectionKey(targetMediaId,targetFrame);
+    setSelectedFrameKeys(current=>current.includes(key)?current.filter(item=>item!==key):[...current,key]);
+  };
+
+  const selectFrameKeysFromMarquee=(keys:string[],additive:boolean)=>{
+    setSelectedFrameKeys(current=>frameMarqueeSelection(current,keys,additive));
+  };
+
+  const requestClearSelectedFrames=()=>{
+    const items=selectedFrameKeys.map(key=>{
+      const [mediaText,frameText]=key.split(':');
+      return {mediaId:Number(mediaText),frame:Number(frameText)};
+    }).filter(item=>Number.isFinite(item.mediaId)&&Number.isFinite(item.frame));
+    if(!items.length)return;
+    setPendingDelete({
+      kind:'frames',
+      items,
+      title:`Clear masks from ${items.length} selected frame${items.length===1?'':'s'}`,
+      hint:'All saved masks on the selected images will be removed. The source media will be kept.',
     });
   };
 
@@ -749,6 +855,35 @@ function Workspace(){
         setPendingDelete(null);
         await refreshProject(project.slug||project.id);
         setStatus(count===1?'Still deleted':`${count} stills deleted`);
+        return;
+      }
+      if(pendingDelete.kind==='frames'){
+        const byMedia=new Map<number,number[]>();
+        for(const item of pendingDelete.items){
+          const frames=byMedia.get(item.mediaId)??[];
+          frames.push(item.frame);
+          byMedia.set(item.mediaId,frames);
+        }
+        let deleted=0;
+        for(const [mediaId,frames] of byMedia){
+          const result=await api.clearFrameAnnotations(mediaId,frames);
+          deleted+=result.deleted;
+        }
+        const currentKey=media?frameSelectionKey(media.id,isStill?0:frame):null;
+        if(currentKey&&pendingDelete.items.some(item=>frameSelectionKey(item.mediaId,item.frame)===currentKey)){
+          await closePromptSession();
+          setSelected(null);
+          setSelectedIds([]);
+          setPoints([]);
+          setBox(null);
+          canvas.current?.clearMask();
+          setDirty(false);
+        }
+        setSelectedFrameKeys([]);
+        if(media)await refreshWorkspace(media.id,frame);
+        await syncProjectInfo();
+        setPendingDelete(null);
+        setStatus(`${deleted} annotation${deleted===1?'':'s'} cleared`);
         return;
       }
       const ids=pendingDelete.ids;
@@ -852,6 +987,7 @@ function Workspace(){
   const editListedAnnotation=async(targetMediaId:number,frameNum:number,annotationId:number)=>{
     if(!project)return;
     if(media?.id!==targetMediaId){
+      await commitMaskOnLeaveRef.current();
       pendingStillEdit.current=annotationId;
       navigate(projectHref(project,`/media/${targetMediaId}`));
       return;
@@ -879,8 +1015,8 @@ function Workspace(){
       const el=e.target as HTMLElement|null;
       if(el&&(el.tagName==='INPUT'||el.tagName==='SELECT'||el.tagName==='TEXTAREA'||el.isContentEditable||el.closest('.frame-filters')))return;
       if(pendingDelete)return;
-      if(e.key==='ArrowRight'){e.preventDefault();if(media.kind==='image')gotoStill(e.shiftKey?10:1);else void gotoFrame(frame+(e.shiftKey?10:1));return}
-      if(e.key==='ArrowLeft'){e.preventDefault();if(media.kind==='image')gotoStill(e.shiftKey?-10:-1);else void gotoFrame(frame-(e.shiftKey?10:1));return}
+      if(e.key==='ArrowRight'){e.preventDefault();if(media.kind==='image')void gotoStill(e.shiftKey?10:1);else void gotoFrame(frame+(e.shiftKey?10:1));return}
+      if(e.key==='ArrowLeft'){e.preventDefault();if(media.kind==='image')void gotoStill(e.shiftKey?-10:-1);else void gotoFrame(frame-(e.shiftKey?10:1));return}
       if(e.key==='z'&&(e.ctrlKey||e.metaKey)){e.preventDefault();if(e.shiftKey)redoEdit();else undoEdit();return}
       if((e.key==='y'||e.key==='Y')&&(e.ctrlKey||e.metaKey)){e.preventDefault();redoEdit();return}
       if(e.key==='v'||e.key==='V'){setTool('select');return}
@@ -938,14 +1074,16 @@ function Workspace(){
     }
   };
 
-  const extractCurrent=extractQueue[0]??null;
+  const showExtract=extractDialogVisible(extractQueue.length,Boolean(reusedNotice));
 
   const dialogs=<>
     {showProjectForm&&<NameDialog title="New project" hint="Give this inspection a unique name. It becomes the project URL." nameLabel="Project name" namePlaceholder="e.g. Riverside trunk – 12 Sep 2026" extraLabel="Description (optional)" extraPlaceholder="Inspection location, crew, or notes" submitLabel="Create project" busy={busy} showSlug onCancel={()=>setShowProjectForm(false)} onSubmit={submitNewProject}/>}
-    {extractCurrent&&!reusedNotice&&<ExtractDialog media={extractCurrent} remaining={extractQueue.length} busy={busy} onCancel={()=>setExtractQueue(queue=>queue.slice(1))} onExtract={runExtract}/>}
-    {reusedNotice&&<NoticeDialog title={reusedNotice.title} hint={reusedNotice.hint} onClose={()=>setReusedNotice(null)}/>}
+    {uploadRows.length>0&&!showExtract&&<UploadProgressDialog rows={uploadRows} onClose={()=>setUploadRows([])}/>}
+    {reusedNotice&&!showExtract&&<NoticeDialog title={reusedNotice.title} hint={reusedNotice.hint} onClose={()=>setReusedNotice(null)}/>}
+    {showExtract&&<ExtractDialog media={extractQueue} jobs={extractionJobs} busy={busy} onCancel={()=>setExtractQueue([])} onExtract={runExtract}/>}
     {showExport&&<ExportDialog projects={projects} defaultProjectId={project?.id??null} onClose={()=>setShowExport(false)}/>}
     {pendingDelete?.kind==='annotations'&&<ConfirmDialog title={pendingDelete.title} hint={pendingDelete.hint} busy={deleteBusy} onCancel={()=>{if(!deleteBusy)setPendingDelete(null)}} onConfirm={()=>{void confirmPendingDelete()}}/>}
+    {pendingDelete?.kind==='frames'&&<ConfirmDialog title={pendingDelete.title} hint={pendingDelete.hint} confirmLabel="Clear masks" busy={deleteBusy} onCancel={()=>{if(!deleteBusy)setPendingDelete(null)}} onConfirm={()=>{void confirmPendingDelete()}}/>}
     {pendingDelete?.kind==='stills'&&<ConfirmDialog title={pendingDelete.count===1?'Delete still?':`Delete ${pendingDelete.count} stills?`} hint="Annotations on those files will be removed. Videos are kept." busy={deleteBusy} onCancel={()=>{if(!deleteBusy)setPendingDelete(null)}} onConfirm={()=>{void confirmPendingDelete()}}/>}
     {pendingDelete?.kind==='project'&&<DeleteProjectDialog name={pendingDelete.name} busy={deleteBusy} busyLabel={deleteBusyLabel} onCancel={()=>{if(!deleteBusy)setPendingDelete(null)}} onConfirm={downloadBackup=>{void confirmPendingDelete(downloadBackup)}}/>}
     {error&&boot==='ready'&&<Toast text={error} close={()=>setError(null)}/>}
@@ -976,7 +1114,7 @@ function Workspace(){
       project={project}
       onUpload={upload}
       onAnnotate={item=>{void requestAnnotate(item)}}
-      onExtract={item=>setExtractQueue(queue=>queue.some(x=>x.id===item.id)?queue:[item,...queue])}
+      onExtract={item=>{setReusedNotice(null);setExtractQueue(queue=>queue.some(x=>x.id===item.id)?queue:[item,...queue])}}
       onDeleteMedia={async item=>{
         if(confirm(`Delete ${item.name} and all its annotations?`)){
           await api.deleteMedia(item.id);
@@ -994,7 +1132,7 @@ function Workspace(){
   if(view==='annotate'&&project&&media)return <div className="annotator">
     <header className="annotator-header">
       <div className="header-left">
-        <button className="icon-btn" onClick={()=>{navigate(projectHref(project));refreshProject(project.slug||project.id)}}>←</button>
+        <button className="icon-btn" onClick={()=>{void commitMaskOnLeaveRef.current().then(()=>{navigate(projectHref(project));void refreshProject(project.slug||project.id)})}}>←</button>
         <div className="media-title">
           <strong>{media.name}</strong>
           <span>{isStill?`${project.name} · Pictures · ${stillPos+1} of ${stills.length}`:`${project.name} · ${media.kind} · ${media.frame_count} frames`}</span>
@@ -1024,8 +1162,11 @@ function Workspace(){
               onStatus={setFrameStatus}
               onLabels={setFrameLabelIds}
             />
+            {selectedFrameKeys.length>0&&<button type="button" className="frame-clear-selected" onClick={requestClearSelectedFrames}>
+              Clear masks ({selectedFrameKeys.length})
+            </button>}
           </div>
-          <div className="frame-list">
+          <FrameList onSelectKeys={selectFrameKeysFromMarquee}>
             {isStill
               ? <>
             {filteredStills.length===0&&<div className="frame-empty">{filtersOn?'No pictures match these filters':'No pictures yet'}</div>}
@@ -1036,7 +1177,9 @@ function Workspace(){
                 item={row}
                 indexLabel={row.index}
                 active={row.mediaId===media.id}
-                onOpen={()=>navigate(projectHref(project,`/media/${row.mediaId}`))}
+                selected={selectedFrameKeys.includes(frameSelectionKey(row.mediaId,row.frame))}
+                onSelect={()=>toggleFrameSelection(row.mediaId,row.frame)}
+                onOpen={()=>{if(media.id===row.mediaId)return;void commitMaskOnLeaveRef.current().then(()=>navigate(projectHref(project,`/media/${row.mediaId}`)))}}
                 onExclude={alsoDelete=>{void excludeListedFrame(row.mediaId,row.frame,alsoDelete)}}
                 onRestore={()=>{void restoreListedFrame(row.mediaId,row.frame)}}
                 onEdit={id=>{void editListedAnnotation(row.mediaId,row.frame,id)}}
@@ -1052,6 +1195,8 @@ function Workspace(){
                 mediaId={media.id}
                 item={item}
                 active={item.frame===frame}
+                selected={selectedFrameKeys.includes(frameSelectionKey(media.id,item.frame))}
+                onSelect={()=>toggleFrameSelection(media.id,item.frame)}
                 onOpen={()=>gotoFrame(item.frame)}
                 onExclude={alsoDelete=>{void excludeListedFrame(media.id,item.frame,alsoDelete)}}
                 onRestore={()=>{void restoreListedFrame(media.id,item.frame)}}
@@ -1060,7 +1205,7 @@ function Workspace(){
               />
             ))}
               </>}
-          </div>
+          </FrameList>
         </div>
       </aside>
       <main className="editor">
@@ -1332,11 +1477,114 @@ function FrameFilters(props:{
   </div>;
 }
 
+function frameListPoint(el:HTMLElement,clientX:number,clientY:number){
+  const rect=el.getBoundingClientRect();
+  return {x:clientX-rect.left+el.scrollLeft,y:clientY-rect.top+el.scrollTop};
+}
+
+function frameThumbRects(el:HTMLElement){
+  const listRect=el.getBoundingClientRect();
+  return [...el.querySelectorAll<HTMLElement>('.frame-thumb[data-frame-key]')].map(node=>{
+    const thumb=node.getBoundingClientRect();
+    return {
+      key:node.dataset.frameKey??'',
+      rect:{
+        left:thumb.left-listRect.left+el.scrollLeft,
+        top:thumb.top-listRect.top+el.scrollTop,
+        right:thumb.right-listRect.left+el.scrollLeft,
+        bottom:thumb.bottom-listRect.top+el.scrollTop,
+      },
+    };
+  }).filter(item=>item.key);
+}
+
+function frameListMarqueeTarget(target:EventTarget|null){
+  if(!(target instanceof HTMLElement))return false;
+  return !target.closest('.frame-select,.thumb-action,.frame-tag button,.frame-tag .tag-x');
+}
+
+function FrameList(props:{children:ReactNode;onSelectKeys:(keys:string[],additive:boolean)=>void}){
+  const ref=useRef<HTMLDivElement>(null);
+  const dragStart=useRef<{x:number;y:number}|null>(null);
+  const marqueeActive=useRef(false);
+  const suppressClick=useRef(false);
+  const [draftBox,setDraftBox]=useState<BoxRect|null>(null);
+
+  useEffect(()=>{
+    const el=ref.current;
+    if(!el)return;
+    const block=(e:Event)=>{
+      if(!suppressClick.current)return;
+      suppressClick.current=false;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    el.addEventListener('click',block,true);
+    return()=>el.removeEventListener('click',block,true);
+  },[]);
+
+  const finishDrag=(e:ReactPointerEvent<HTMLDivElement>)=>{
+    const el=ref.current;
+    const start=dragStart.current;
+    dragStart.current=null;
+    if(!el||!start)return;
+    if(marqueeActive.current){
+      marqueeActive.current=false;
+      const end=frameListPoint(el,e.clientX,e.clientY);
+      const box=normalizeBoxRect(start.x,start.y,end.x,end.y);
+      const keys=frameKeysInMarquee(box,frameThumbRects(el));
+      const additive=e.shiftKey||e.ctrlKey||e.metaKey;
+      props.onSelectKeys(keys,additive);
+      suppressClick.current=true;
+      setDraftBox(null);
+      try{el.releasePointerCapture(e.pointerId)}catch{}
+      return;
+    }
+    setDraftBox(null);
+  };
+
+  return <div
+    ref={ref}
+    className={`frame-list${draftBox?' marquee-active':''}`}
+    onPointerDown={e=>{
+      if(e.button!==0||!frameListMarqueeTarget(e.target))return;
+      const el=ref.current;
+      if(!el)return;
+      dragStart.current=frameListPoint(el,e.clientX,e.clientY);
+      marqueeActive.current=false;
+    }}
+    onPointerMove={e=>{
+      const el=ref.current;
+      const start=dragStart.current;
+      if(!el||!start)return;
+      const point=frameListPoint(el,e.clientX,e.clientY);
+      const box=normalizeBoxRect(start.x,start.y,point.x,point.y);
+      const w=box.right-box.left;
+      const h=box.bottom-box.top;
+      if(!marqueeActive.current&&selectEmptyRelease(w,h)==='marquee'){
+        marqueeActive.current=true;
+        el.setPointerCapture(e.pointerId);
+      }
+      if(marqueeActive.current){
+        e.preventDefault();
+        setDraftBox(box);
+      }
+    }}
+    onPointerUp={finishDrag}
+    onPointerCancel={finishDrag}
+  >
+    {props.children}
+    {draftBox&&<div className="frame-marquee" style={{left:draftBox.left,top:draftBox.top,width:draftBox.right-draftBox.left,height:draftBox.bottom-draftBox.top}}/>}
+  </div>;
+}
+
 function FrameThumb(props:{
   mediaId:number;
   item:FrameInfo;
   indexLabel?:number;
   active:boolean;
+  selected:boolean;
+  onSelect:()=>void;
   onOpen:()=>void;
   onExclude:(alsoDelete:boolean)=>void;
   onRestore:()=>void;
@@ -1361,9 +1609,12 @@ function FrameThumb(props:{
     ref.current?.scrollIntoView({block:'nearest'});
   },[props.active]);
   const labels=props.item.labels??[];
-  return <div ref={ref} className={`frame-thumb ${props.active?'active':''} ${props.item.excluded?'excluded':''}`}>
+  return <div ref={ref} data-frame-key={frameSelectionKey(props.mediaId,props.item.frame)} className={`frame-thumb ${props.active?'active':''} ${props.item.excluded?'excluded':''}`}>
     <button type="button" className="frame-open" onClick={props.onOpen}>
       {show?<img src={api.frameUrl(props.mediaId,props.item.frame,180)} alt=""/>:<span className="frame-ph"/>}
+    </button>
+    <button type="button" className={`frame-select${props.selected?' selected':''}`} aria-label={props.selected?'Deselect image':'Select image'} aria-pressed={props.selected} onClick={e=>{e.stopPropagation();props.onSelect()}}>
+      {props.selected&&<CheckIcon/>}
     </button>
     <span className="frame-index">{displayIndex(props.indexLabel??props.item.frame)}</span>
     {props.item.excluded
