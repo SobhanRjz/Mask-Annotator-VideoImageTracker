@@ -6,6 +6,7 @@ from app.utils.images import data_url_to_mask,overlay_png
 router=APIRouter(prefix='/annotations',tags=['annotations'])
 class SaveIn(BaseModel):media_id:int;frame:int;label_id:int;mask_png_data_url:str;replace_annotation_id:int|None=None;source:str='manual'
 class FullIn(BaseModel):media_id:int;frame:int;label_id:int
+class ClearFramesIn(BaseModel):frames:list[int]
 @router.get('/media/{mid}')
 def ls(mid:int,frame:int|None=None,limit:int=500):return annotation_service.list(mid,frame,limit)
 @router.get('/{aid}/mask.png')
@@ -22,3 +23,7 @@ def save(x:SaveIn):
     except Exception as e:raise HTTPException(400,str(e))
 @router.delete('/{aid}')
 def delete(aid:int):annotation_service.delete(aid);return {'ok':True}
+@router.delete('/media/{mid}/frames')
+def clear_frames(mid:int,x:ClearFramesIn):
+    try:return annotation_service.clear_frames(mid,x.frames)
+    except Exception as e:raise HTTPException(400,str(e))
