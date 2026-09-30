@@ -17,4 +17,6 @@ class Settings(BaseSettings):
     def mask_root(self) -> Path: return self.data_root / 'masks'
     @property
     def export_root(self) -> Path: return self.data_root / 'exports'
+    @property
+    def backup_root(self) -> Path: return self.data_root / 'backups'
 settings = Settings()
