@@ -136,7 +136,7 @@ export function ProjectWorkspace(props:{
                   <DoneCheck checked={row.complete} onChange={value=>props.onSetVideoComplete(item,value)}/>
                   {mediaReady(item)
                     ? <button className="annotate" onClick={()=>props.onAnnotate(item)}>Annotate</button>
-                    : <button className="extract" onClick={()=>props.onExtract(item)}>Extract frames</button>}
+                    : <button type="button" className="extract" onClick={()=>props.onExtract(item)}>Extract frames</button>}
                   <button className="danger" onClick={()=>props.onDeleteMedia(item)}>Delete</button>
                 </div>
               </article>;
