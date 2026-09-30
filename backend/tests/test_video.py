@@ -24,6 +24,9 @@ class VideoHelperTests(unittest.TestCase):
         self.assertIn('yadif', ' '.join(cmd))
         self.assertIn('fps=2.000000', ' '.join(cmd))
         self.assertIn('-start_number', cmd)
+        self.assertIn('-vsync', cmd)
+        self.assertEqual(cmd[cmd.index('-vsync') + 1], 'vfr')
+        self.assertNotIn('-fps_mode', cmd)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 import json
 import subprocess
+import threading
 from io import BytesIO
 from pathlib import Path
 
@@ -33,9 +34,11 @@ def is_nearly_black(image: Image.Image, threshold: float = 2.0) -> bool:
 def extract_command(source: str, pattern: str, fps: float, quality: int = 2) -> list[str]:
     return [
         'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+        '-progress', 'pipe:1', '-nostats',
         '-i', str(source),
         '-vf', f'yadif,fps={float(fps):.6f}',
         '-q:v', str(quality),
+        '-vsync', 'vfr',
         '-start_number', '0',
         str(pattern),
     ]
@@ -78,10 +81,43 @@ def probe(path: str) -> dict:
     }
 
 
-def extract_jpegs(source: str, dest_dir: Path, fps: float, quality: int = 2) -> int:
+def extract_jpegs(
+    source: str,
+    dest_dir: Path,
+    fps: float,
+    quality: int = 2,
+    progress=None,
+    duration: float = 0,
+) -> int:
     dest_dir.mkdir(parents=True, exist_ok=True)
     pattern = dest_dir / '%06d.jpg'
-    _run(extract_command(source, str(pattern), fps, quality))
+    process = subprocess.Popen(
+        extract_command(source, str(pattern), fps, quality),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stderr_chunks: list[str] = []
+
+    def drain_stderr():
+        if process.stderr:
+            stderr_chunks.append(process.stderr.read())
+
+    reader = threading.Thread(target=drain_stderr, daemon=True)
+    reader.start()
+    if process.stdout:
+        for line in process.stdout:
+            if progress and (
+                line.startswith('out_time_us=')
+                or line.startswith('out_time_ms=')
+                or line.startswith('progress=')
+            ):
+                progress(line, duration)
+    reader.join(timeout=30)
+    stderr = ''.join(stderr_chunks)
+    return_code = process.wait()
+    if return_code != 0:
+        raise FFmpegError(stderr.strip()[-800:] or 'ffmpeg failed')
     return len(sorted(dest_dir.glob('*.jpg')))
 
 
