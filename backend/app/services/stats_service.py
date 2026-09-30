@@ -1,20 +1,159 @@
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
 from app.core.db import db
+from app.core.settings import settings
 from app.utils.cluster import kmeans_1d
+
 HEATMAP_SIZE = 64
 MAX_MASK_PIXELS = 64_000_000
+BITS_BYTES = HEATMAP_SIZE * HEATMAP_SIZE // 8
+REPORT_TTL_SECONDS = 60
+ROW_BATCH = 4096
+BACKFILL_CHUNK = 256
+BACKFILL_WORKERS = 4
+UNUSABLE = (0, b'')
 
 
 def _ready_clause():
     return "(m.kind = 'image' OR m.extract_status = 'ready')"
 
 
+def mask_features(gray):
+    """Return (pixel area, packed 64x64 occupancy bits) for an 'L' mask image."""
+    area = sum(gray.histogram()[128:])
+    if area <= 0:
+        return UNUSABLE
+    small = np.asarray(
+        gray.resize((HEATMAP_SIZE, HEATMAP_SIZE), Image.Resampling.BILINEAR)
+    )
+    return int(area), np.packbits(small > 16).tobytes()
+
+
+def read_mask_features(path):
+    """Decode a mask file once. None means the file is missing (retry later)."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        with Image.open(path) as image:
+            if image.width * image.height > MAX_MASK_PIXELS:
+                return UNUSABLE
+            return mask_features(image.convert('L'))
+    except Exception:
+        return UNUSABLE
+
+
+class _SpatialAccumulator:
+    def __init__(self):
+        self.total = np.zeros(HEATMAP_SIZE * HEATMAP_SIZE, dtype=np.float64)
+        self.by_label = {}
+        self.areas = []
+        self._pending = []
+
+    def add(self, label, area, bits):
+        if area <= 0 or len(bits) != BITS_BYTES:
+            return
+        self._pending.append((label, area, bits))
+        if len(self._pending) >= ROW_BATCH:
+            self.flush()
+
+    def flush(self):
+        if not self._pending:
+            return
+        packed = np.frombuffer(
+            b''.join(item[2] for item in self._pending), dtype=np.uint8
+        ).reshape(len(self._pending), BITS_BYTES)
+        occupied = np.unpackbits(packed, axis=1)
+        self.total += occupied.sum(axis=0)
+        groups = {}
+        for index, (label, area, _bits) in enumerate(self._pending):
+            self.areas.append(int(area))
+            groups.setdefault(label, []).append(index)
+        for label, indexes in groups.items():
+            if label not in self.by_label:
+                self.by_label[label] = np.zeros_like(self.total)
+            self.by_label[label] += occupied[indexes].sum(axis=0)
+        self._pending = []
+
+    def result(self):
+        self.flush()
+        return {
+            'all': _grid(self.total),
+            'by_label': {name: _grid(acc) for name, acc in self.by_label.items()},
+        }, self.areas
+
+
+def _grid(acc):
+    peak = float(acc.max())
+    values = acc / peak if peak > 0 else acc
+    return {
+        'width': HEATMAP_SIZE,
+        'height': HEATMAP_SIZE,
+        'values': values.reshape(HEATMAP_SIZE, HEATMAP_SIZE).tolist(),
+    }
+
+
 class StatsService:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._cached = None
+
     def overview(self):
+        with self._lock:
+            stamp = self._stamp()
+            cached = self._cached
+            if cached and cached[0] == stamp and time.monotonic() - cached[2] < REPORT_TTL_SECONDS:
+                return cached[1]
+            report = self._build_overview()
+            self._cached = (stamp, report, time.monotonic())
+            return report
+
+    def remember_mask(self, path, mask):
+        """Prefill the per-mask cache when a mask is saved, so the dashboard never decodes it."""
+        gray = Image.fromarray(np.asarray(mask, dtype=np.uint8) * 255)
+        area, bits = mask_features(gray)
+        self._store([(str(path), area, bits)])
+
+    def _stamp(self):
+        """Cheap change detector: any SQLite commit touches the db file or its WAL."""
+        db_path = Path(settings.db_path)
+        parts = [str(db_path)]
+        for path in (db_path, db_path.with_name(db_path.name + '-wal')):
+            try:
+                info = path.stat()
+                parts.append((info.st_mtime_ns, info.st_size))
+            except OSError:
+                parts.append(None)
+        return tuple(parts)
+
+    def _store(self, entries):
+        if not entries:
+            return
+        with db() as conn:
+            conn.executemany(
+                'INSERT OR REPLACE INTO mask_stats(mask_path, area, bits) VALUES (?, ?, ?)',
+                entries,
+            )
+
+    def _prune(self):
+        with db() as conn:
+            conn.execute(
+                '''DELETE FROM mask_stats
+                   WHERE mask_path NOT IN (
+                       SELECT mask_path FROM annotations
+                       UNION
+                       SELECT mask_path FROM archived_annotations
+                   )'''
+            )
+
+    def _build_overview(self):
+        self._prune()
         with db() as conn:
             project_count = conn.execute('SELECT COUNT(*) n FROM projects').fetchone()['n']
             media_rows = [
@@ -39,25 +178,17 @@ class StatsService:
             defects = [
                 dict(row)
                 for row in conn.execute(
-                    '''SELECT l.name, MIN(l.color) color, COUNT(*) count
-                       FROM annotations a
-                       JOIN media m ON m.id = a.media_id
-                       JOIN labels l ON l.id = a.label_id
-                       WHERE {ready}
-                       GROUP BY l.name
-                       ORDER BY count DESC, l.name'''.format(ready=_ready_clause())
-                )
-            ]
-            mask_rows = list(
-                conn.execute(
-                    f'''SELECT a.mask_path, l.name AS label_name
+                    f'''SELECT l.name, MIN(l.color) color, COUNT(*) count
                         FROM annotations a
                         JOIN media m ON m.id = a.media_id
                         JOIN labels l ON l.id = a.label_id
-                        WHERE {_ready_clause()}'''
+                        WHERE {_ready_clause()}
+                        GROUP BY l.name
+                        ORDER BY count DESC, l.name'''
                 )
-            )
+            ]
             continue_target = self._continue_target(conn)
+            spatial, areas = self._mask_spatial(conn)
             video_count = sum(1 for row in media_rows if row['kind'] == 'video')
             image_count = sum(1 for row in media_rows if row['kind'] == 'image')
             video_seconds = sum(
@@ -71,7 +202,6 @@ class StatsService:
                 if row['kind'] == 'image'
             )
 
-        spatial, areas = self._mask_spatial(mask_rows)
         widths = [int(row['width'] or 0) for row in media_rows]
         heights = [int(row['height'] or 0) for row in media_rows]
         avg_width = round(sum(widths) / len(widths)) if widths else 0
@@ -166,50 +296,42 @@ class StatsService:
         target['frame'] = frame
         return target
 
-    def _grid(self, acc):
-        peak = float(acc.max())
-        values = acc / peak if peak > 0 else acc
-        return {
-            'width': HEATMAP_SIZE,
-            'height': HEATMAP_SIZE,
-            'values': values.tolist(),
-        }
-
-    def _mask_spatial(self, rows):
-        acc_all = np.zeros((HEATMAP_SIZE, HEATMAP_SIZE), dtype=np.float64)
-        acc_by_label = {}
-        areas = []
+    def _mask_spatial(self, conn):
+        acc = _SpatialAccumulator()
+        uncached = []
+        rows = conn.execute(
+            f'''SELECT a.mask_path, l.name AS label_name, s.area, s.bits
+                FROM annotations a
+                JOIN media m ON m.id = a.media_id
+                JOIN labels l ON l.id = a.label_id
+                LEFT JOIN mask_stats s ON s.mask_path = a.mask_path
+                WHERE {_ready_clause()}'''
+        )
         for row in rows:
-            path = Path(row['mask_path'])
-            if not path.is_file():
-                continue
-            try:
-                with Image.open(path) as image:
-                    if image.width * image.height > MAX_MASK_PIXELS:
-                        continue
-                    gray = image.convert('L')
-                    area = sum(gray.histogram()[128:])
-                    if area <= 0:
-                        continue
-                    resized = np.asarray(
-                        gray.resize(
-                            (HEATMAP_SIZE, HEATMAP_SIZE),
-                            Image.Resampling.BILINEAR,
-                        )
-                    )
-            except Exception:
-                continue
-            areas.append(int(area))
-            occupied = resized > 16
-            acc_all += occupied
             label = row['label_name'] or 'Unknown'
-            if label not in acc_by_label:
-                acc_by_label[label] = np.zeros((HEATMAP_SIZE, HEATMAP_SIZE), dtype=np.float64)
-            acc_by_label[label] += occupied
-        return {
-            'all': self._grid(acc_all),
-            'by_label': {name: self._grid(grid) for name, grid in acc_by_label.items()},
-        }, areas
+            if row['area'] is None:
+                uncached.append((row['mask_path'], label))
+                continue
+            acc.add(label, row['area'], row['bits'])
+        self._backfill(uncached, acc)
+        return acc.result()
+
+    def _backfill(self, uncached, acc):
+        """Decode masks that were never cached (legacy data), persisting each chunk."""
+        if not uncached:
+            return
+        with ThreadPoolExecutor(max_workers=BACKFILL_WORKERS) as pool:
+            for start in range(0, len(uncached), BACKFILL_CHUNK):
+                chunk = uncached[start:start + BACKFILL_CHUNK]
+                decoded = pool.map(read_mask_features, [path for path, _label in chunk])
+                entries = []
+                for (path, label), features in zip(chunk, decoded):
+                    if features is None:
+                        continue
+                    area, bits = features
+                    entries.append((path, area, bits))
+                    acc.add(label, area, bits)
+                self._store(entries)
 
 
 stats_service = StatsService()

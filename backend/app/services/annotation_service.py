@@ -5,6 +5,7 @@ from PIL import Image
 from app.core.db import db
 from app.core.settings import settings
 from app.services.media_service import media_service
+from app.services.stats_service import stats_service
 from app.utils.images import save_mask,load_mask
 class AnnotationService:
     def list(self,mid,frame=None,limit=500):
@@ -30,6 +31,8 @@ class AnnotationService:
                 cur=c.execute('INSERT INTO annotations(media_id,frame,label_id,mask_path,source,track_group) VALUES (?,?,?,?,?,?)',(mid,frame,lid,str(path),source,track_group));aid=cur.lastrowid
             c.execute('DELETE FROM healthy_frames WHERE media_id=? AND frame=?',(mid,frame))
         if old:Path(old['mask_path']).unlink(missing_ok=True)
+        try:stats_service.remember_mask(path,mask)
+        except Exception:pass # dashboard cache only; the dashboard backfills on a miss
         return self.get(aid)
     def delete(self,aid):
         a=self.get(aid)

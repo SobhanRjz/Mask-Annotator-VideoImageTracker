@@ -114,6 +114,71 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(compact['count'], 2)
         self.assertEqual(large_cluster['count'], 1)
 
+    def _seed_masks(self):
+        project = self._project('Cache me')
+        crack = next(label['id'] for label in project['labels'] if label['name'] == 'Crack')
+        media = self._media(project['id'], 'clip.mp4', 'video', 10, 80, 60)
+        blob = np.zeros((60, 80), dtype=bool)
+        blob[10:30, 10:30] = True
+        for frame in range(3):
+            self._mask(media, frame, crack, blob)
+        return media, crack, blob
+
+    def test_masks_are_decoded_once_then_served_from_cache(self):
+        from unittest import mock
+        from app.services import stats_service as module
+        media, crack, blob = self._seed_masks()
+        first = module.stats_service.overview()
+        module.stats_service._cached = None
+        with mock.patch.object(module.Image, 'open', side_effect=AssertionError('mask decoded again')):
+            second = module.stats_service.overview()
+        self.assertEqual(first, second)
+        self.assertEqual(second['mask_count'], 3)
+
+    def test_unchanged_database_returns_cached_report_without_queries(self):
+        from unittest import mock
+        from app.services import stats_service as module
+        self._seed_masks()
+        module.stats_service.overview()
+        first = module.stats_service.overview()
+        with mock.patch.object(module, 'db', side_effect=AssertionError('db touched')):
+            second = module.stats_service.overview()
+        self.assertIs(first, second)
+
+    def test_new_and_removed_masks_are_reflected(self):
+        from app.services.stats_service import stats_service
+        media, crack, blob = self._seed_masks()
+        self.assertEqual(stats_service.overview()['mask_count'], 3)
+        self._mask(media, 5, crack, blob)
+        self.assertEqual(stats_service.overview()['mask_count'], 4)
+        self.conn.execute('DELETE FROM annotations WHERE media_id=? AND frame=?', (media, 0))
+        self.conn.commit()
+        report = stats_service.overview()
+        self.assertEqual(report['mask_count'], 3)
+        self.assertEqual(report['frames_annotated'], 3)
+
+    def test_remember_mask_prefills_cache_at_save_time(self):
+        from unittest import mock
+        from app.services import stats_service as module
+        media, crack, blob = self._seed_masks()
+        module.stats_service.overview()
+        module.stats_service._cached = None
+        from app.services.annotation_service import annotation_service
+        annotation_service.save(media, 7, crack, blob)
+        with mock.patch.object(module.Image, 'open', side_effect=AssertionError('mask decoded again')):
+            report = module.stats_service.overview()
+        self.assertEqual(report['mask_count'], 4)
+
+    def test_orphaned_cache_rows_are_pruned(self):
+        from app.services.stats_service import stats_service
+        media, crack, blob = self._seed_masks()
+        stats_service.overview()
+        self.conn.execute('DELETE FROM annotations')
+        self.conn.commit()
+        stats_service.overview()
+        left = self.conn.execute('SELECT COUNT(*) n FROM mask_stats').fetchone()['n']
+        self.assertEqual(left, 0)
+
     def test_empty_overview(self):
         from app.services.stats_service import stats_service
         report = stats_service.overview()
