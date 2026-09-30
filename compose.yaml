@@ -22,6 +22,7 @@ services:
     volumes:
       - annotator-data:/data
       - sam2-models:/models
+      - ./backups:/data/backups
     ports: ["8091:8090"]
     gpus: all
     restart: unless-stopped
