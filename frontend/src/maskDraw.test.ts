@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {MASK_FILL_ALPHA,alphaIntersectsBox,maskCentroid,overlayFillAlpha,overlayOutlineAlpha,overlayTone,unionMaskAlpha} from './maskDraw.ts';
+import {MASK_FILL_ALPHA,alphaIntersectsBox,maskCentroid,outlineOffsets,overlayBackingSize,overlayFillAlpha,overlayOutlineAlpha,overlayOutlineRadius,overlayTone,unionMaskAlpha} from './maskDraw.ts';
 
 test('mask centroid sits inside occupied pixels',()=>{
   const width=4,height=4;
@@ -45,6 +45,23 @@ test('a marquee hits a mask when any occupied pixel sits in the box',()=>{
   data[(3*width+3)*4+3]=255;
   assert.equal(alphaIntersectsBox(data,width,height,{x0:2,y0:2,x1:5,y1:5}),true);
   assert.equal(alphaIntersectsBox(data,width,height,{x0:5,y0:5,x1:7,y1:7}),false);
+});
+
+test('overlay bitmaps follow the screen so extra masks do not dilate the full frame',()=>{
+  const viewW=960,viewH=540;
+  const backing=overlayBackingSize(viewW,viewH,1);
+  assert.deepEqual(backing,{width:viewW,height:viewH});
+  const perMask=outlineOffsets(overlayOutlineRadius(backing.width,viewW)).length;
+  const sourceRadius=Math.max(2,Math.round(2.2*3840/viewW));
+  const sourceStamps=outlineOffsets(sourceRadius).length;
+  assert.ok(perMask<=20);
+  assert.ok(perMask*4<sourceStamps);
+});
+
+test('overlay backing stays within twice the screen size',()=>{
+  const backing=overlayBackingSize(800,450,3);
+  assert.deepEqual(backing,{width:1600,height:900});
+  assert.ok(overlayOutlineRadius(backing.width,800)<=4);
 });
 
 test('extra rectangle pixels are unioned with the current mask',()=>{

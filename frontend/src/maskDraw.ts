@@ -42,6 +42,25 @@ export function outlineOffsets(radius:number){
   return pts;
 }
 
+const OVERLAY_MAX_EDGE=2048;
+
+/** Bitmap for mask copies. Match the on-screen size so a 2px ring is not dilated across the source frame. */
+export function overlayBackingSize(displayW:number,displayH:number,dpr=1){
+  const ratio=Math.min(2,Math.max(1,Number.isFinite(dpr)?dpr:1));
+  let width=Math.max(1,Math.round(Math.max(1,displayW)*ratio));
+  let height=Math.max(1,Math.round(Math.max(1,displayH)*ratio));
+  const scale=Math.min(1,OVERLAY_MAX_EDGE/Math.max(width,height));
+  width=Math.max(1,Math.round(width*scale));
+  height=Math.max(1,Math.round(height*scale));
+  return {width,height};
+}
+
+/** Screen-pixel ring thickness, clamped so stamp count cannot grow with the source frame. */
+export function overlayOutlineRadius(backingW:number,displayW:number){
+  const shown=displayW>=1?displayW:Math.max(1,backingW);
+  return Math.max(2,Math.min(4,Math.round(2.2*backingW/shown)));
+}
+
 export function unionMaskAlpha(a:Uint8ClampedArray,b:Uint8ClampedArray){
   const out=new Uint8ClampedArray(a.length);
   const n=Math.min(a.length,b.length);
