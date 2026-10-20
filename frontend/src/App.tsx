@@ -282,10 +282,23 @@ function Workspace(){
   };
 
   const refreshStillFrames=async(items:typeof stills)=>{
-    const entries=await Promise.all(items.map(async item=>{
-      const list=await api.getFrames(item.id,0,Math.max(1,item.frame_count||1));
-      return [item.id,list[0]??{frame:0,annotation_count:item.annotation_count??0,excluded:false,labels:[]}] as const;
-    }));
+    if(!project||!items.length){
+      setStillFrames({});
+      return [];
+    }
+    const list=await api.getProjectImageFrames(project.slug||project.id);
+    const byId=new Map(list.map(item=>[item.media_id,item]));
+    const entries=items.map(item=>{
+      const info=byId.get(item.id);
+      const frame:FrameInfo={
+        frame:info?.frame??0,
+        annotation_count:info?.annotation_count??item.annotation_count??0,
+        excluded:info?.excluded??false,
+        healthy:info?.healthy??false,
+        labels:info?.labels??[],
+      };
+      return [item.id,frame] as const;
+    });
     setStillFrames(Object.fromEntries(entries));
     return entries;
   };
@@ -579,14 +592,14 @@ function Workspace(){
     const urls:string[]=[];
     api.listAnnotations(media.id,frame).then(async anns=>{
       if(!stop)setFrameAnns(anns);
-      const items:MaskOverlay[]=[];
-      for(const ann of anns){
+      const items=await Promise.all(anns.map(async ann=>{
         const blob=await api.getMaskBlob(ann.id);
         const url=URL.createObjectURL(blob);
         urls.push(url);
-        items.push({id:ann.id,color:ann.label_color,url,name:ann.label_name});
-      }
-      if(!stop)setOverlays(items);
+        return {id:ann.id,color:ann.label_color,url,name:ann.label_name};
+      }));
+      if(stop){items.forEach(item=>URL.revokeObjectURL(item.url));return}
+      setOverlays(items);
     }).catch(()=>{if(!stop)setOverlays([])});
     return()=>{stop=true;urls.forEach(url=>URL.revokeObjectURL(url))};
   },[media?.id,frame,frames]);

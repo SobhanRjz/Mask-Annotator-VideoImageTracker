@@ -64,6 +64,7 @@ export const cancelExtraction=(mid:number,jobId:string)=>req<ExtractionJob>(`${A
 export const getDefectLabels=()=>req<DefectCatalog>(`${API}/projects/catalog/labels`);
 export const saveDefectLabels=(labels:DefectLabel[])=>req<DefectCatalog>(`${API}/projects/catalog/labels`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({labels})});
 export const getFrames=(mid:number,start=0,limit=20000)=>req<FrameInfo[]>(`${API}/media/${mid}/frames?start=${Math.max(0,start)}&limit=${limit}`);
+export const getProjectImageFrames=(ref:string|number)=>req<Array<FrameInfo&{media_id:number}>>(`${API}/projects/${ref}/images/frames`);
 export const excludeFrame=(mid:number,frame:number,excluded:boolean,del=false)=>req(`${API}/media/${mid}/frames/${frame}/exclude`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({excluded,delete_annotations:del})});
 export const setFrameHealthy=(mid:number,frame:number,healthy:boolean)=>req<{frame:number;healthy:boolean;annotations_deleted:number}>(`${API}/media/${mid}/frames/${frame}/healthy`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({healthy})});
 export const deleteMedia=(mid:number)=>req(`${API}/media/${mid}`,{method:'DELETE'});
