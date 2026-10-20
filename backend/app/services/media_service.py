@@ -457,5 +457,74 @@ class MediaService:
             ).fetchall()
             return [self._load(row['id'], conn) for row in rows]
 
+    def project_image_frames(self, project_id):
+        with db() as conn:
+            images = conn.execute(
+                "SELECT id FROM media WHERE project_id=? AND kind='image' ORDER BY id",
+                (project_id,),
+            ).fetchall()
+            counts = {
+                row['media_id']: row['n']
+                for row in conn.execute(
+                    '''SELECT a.media_id, COUNT(*) n
+                       FROM annotations a
+                       JOIN media m ON m.id=a.media_id
+                       WHERE m.project_id=? AND m.kind='image' AND a.frame=0
+                       GROUP BY a.media_id''',
+                    (project_id,),
+                )
+            }
+            excluded = {
+                row['media_id']
+                for row in conn.execute(
+                    '''SELECT e.media_id
+                       FROM excluded_frames e
+                       JOIN media m ON m.id=e.media_id
+                       WHERE m.project_id=? AND m.kind='image' AND e.frame=0''',
+                    (project_id,),
+                )
+            }
+            healthy = {
+                row['media_id']
+                for row in conn.execute(
+                    '''SELECT h.media_id
+                       FROM healthy_frames h
+                       JOIN media m ON m.id=h.media_id
+                       WHERE m.project_id=? AND m.kind='image' AND h.frame=0''',
+                    (project_id,),
+                )
+            }
+            labels_by_media: dict[int, list[dict]] = {}
+            for row in conn.execute(
+                '''SELECT a.id annotation_id, a.media_id, a.source,
+                          l.id label_id, l.name, l.color
+                   FROM annotations a
+                   JOIN labels l ON l.id=a.label_id
+                   JOIN media m ON m.id=a.media_id
+                   WHERE m.project_id=? AND m.kind='image' AND a.frame=0
+                   ORDER BY a.media_id, a.id''',
+                (project_id,),
+            ):
+                labels_by_media.setdefault(row['media_id'], []).append(
+                    {
+                        'annotation_id': row['annotation_id'],
+                        'id': row['label_id'],
+                        'name': row['name'],
+                        'color': row['color'],
+                        'source': row['source'],
+                    }
+                )
+        return [
+            {
+                'media_id': row['id'],
+                'frame': 0,
+                'annotation_count': counts.get(row['id'], 0),
+                'excluded': row['id'] in excluded,
+                'healthy': row['id'] in healthy,
+                'labels': labels_by_media.get(row['id'], []),
+            }
+            for row in images
+        ]
+
 
 media_service = MediaService()

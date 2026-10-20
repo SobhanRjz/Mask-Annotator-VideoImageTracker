@@ -127,6 +127,54 @@ class MediaCompleteTests(unittest.TestCase):
         self.assertEqual([item['id'] for item in stills], [first, second])
         self.assertTrue(all(item['kind'] == 'image' for item in stills))
 
+    def test_project_image_frames_returns_every_still_in_one_list(self):
+        from app.services.media_service import media_service
+        video = self._media('clip.mp4', 'video', 4)
+        bare = self._media('bare.png', 'image')
+        marked = self._media('marked.png', 'image')
+        excluded = self._media('skip.png', 'image')
+        label = self.conn.execute(
+            "SELECT id, color FROM labels WHERE project_id=? AND name='Crack'",
+            (self.pid,),
+        ).fetchone()
+        self.assertIsNotNone(label)
+        self.conn.execute(
+            '''INSERT INTO annotations(media_id,frame,label_id,mask_path,source)
+               VALUES (?,?,?,?,?)''',
+            (marked, 0, label['id'], 'mask.png', 'manual'),
+        )
+        self.conn.execute(
+            'INSERT INTO excluded_frames(media_id,frame) VALUES (?,?)',
+            (excluded, 0),
+        )
+        self.conn.execute(
+            'INSERT INTO healthy_frames(media_id,frame) VALUES (?,?)',
+            (bare, 0),
+        )
+        self.conn.execute(
+            '''INSERT INTO annotations(media_id,frame,label_id,mask_path,source)
+               VALUES (?,?,?,?,?)''',
+            (video, 0, label['id'], 'video-mask.png', 'manual'),
+        )
+        self.conn.commit()
+
+        rows = media_service.project_image_frames(self.pid)
+
+        self.assertEqual([row['media_id'] for row in rows], [bare, marked, excluded])
+        by_id = {row['media_id']: row for row in rows}
+        self.assertEqual(by_id[bare]['frame'], 0)
+        self.assertEqual(by_id[bare]['annotation_count'], 0)
+        self.assertTrue(by_id[bare]['healthy'])
+        self.assertEqual(by_id[bare]['labels'], [])
+        self.assertEqual(by_id[marked]['annotation_count'], 1)
+        self.assertEqual(by_id[marked]['labels'][0]['name'], 'Crack')
+        self.assertEqual(by_id[marked]['labels'][0]['color'], label['color'])
+        self.assertEqual(by_id[marked]['labels'][0]['source'], 'manual')
+        self.assertGreater(by_id[marked]['labels'][0]['annotation_id'], 0)
+        self.assertFalse(by_id[marked]['excluded'])
+        self.assertTrue(by_id[excluded]['excluded'])
+        self.assertEqual(media_service.project_image_frames(self.pid + 1), [])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -52,6 +52,8 @@ def download_backup(pid:str):
 def delete(pid:str):project_service.delete(pid_of(pid));return {'ok':True}
 @router.post('/{pid}/media')
 def upload(pid:str,files:list[UploadFile]=File(...)):return media_service.upload(pid_of(pid),files)
+@router.get('/{pid}/images/frames')
+def image_frames(pid:str):return media_service.project_image_frames(pid_of(pid))
 @router.patch('/{pid}/images/complete')
 def images_complete(pid:str,x:ImagesCompleteIn):
     try:return media_service.set_project_images_complete(pid_of(pid),x.annotation_complete)
