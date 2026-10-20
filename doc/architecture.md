@@ -114,7 +114,7 @@ Base path `/api`.
 | Upload | `POST /projects/{pid}/media` | `multipart/form-data` field `files` |
 | Media | `GET/PATCH/DELETE /media/{mid}` | PATCH `{annotation_complete}` is videos only |
 | Frames | `GET /media/{mid}/frame/{n}`, `GET /media/{mid}/frames` | Optional `thumb=` for JPEG thumbs |
-| Project stills | `PATCH /projects/{pid}/images/complete`, `DELETE /projects/{pid}/images` | Album Done flag; delete stills only |
+| Project stills | `GET /projects/{pid}/images/frames`, `PATCH /projects/{pid}/images/complete`, `DELETE /projects/{pid}/images` | One frame-0 summary for every still. Album Done flag; delete stills only |
 | Exclude | `POST /media/{mid}/frames/{n}/exclude` | `{excluded, delete_annotations}` |
 | Healthy | `POST /media/{mid}/frames/{n}/healthy` | `{healthy}`. Marks a still or video frame as reviewed with no defect. Removes masks on that frame. |
 | Annotations | `GET /annotations/media/{mid}`, `POST /annotations/masks`, `POST /annotations/full`, `DELETE /annotations/{id}` | `POST /full` saves a mask that covers the whole frame for Healthy or Loss of view (CU) and removes other masks on that frame |
