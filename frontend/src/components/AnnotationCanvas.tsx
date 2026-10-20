@@ -2,7 +2,7 @@ import {forwardRef,useEffect,useImperativeHandle,useLayoutEffect,useRef,useState
 import type {CSSProperties,PointerEvent as ReactPointerEvent} from 'react';
 import type {BoxPrompt,Label,PromptPoint,ToolMode} from '../types';
 import {clampMenuPos,clickOutsideUnfocuses,fitScale,paintOverlayCopy,panBy,selectDragStartsMarquee,selectEmptyRelease,strokeSendsToSam} from '../editorWorkflow';
-import {MASK_FILL_ALPHA,alphaIntersectsBox,maskCentroid,outlineOffsets,overlayFillAlpha,overlayOutlineAlpha,overlayTone,unionMaskAlpha} from '../maskDraw';
+import {MASK_FILL_ALPHA,alphaIntersectsBox,maskCentroid,outlineOffsets,overlayBackingSize,overlayFillAlpha,overlayOutlineAlpha,overlayOutlineRadius,overlayTone,unionMaskAlpha} from '../maskDraw';
 
 export type MaskOverlay={id:number;color:string;url:string;name:string};
 
@@ -75,54 +75,81 @@ function binarizeMask(ctx:CanvasRenderingContext2D,img:CanvasImageSource,w:numbe
   ctx.putImageData(data,0,0);
 }
 
-function paintTint(ctx:CanvasRenderingContext2D,img:CanvasImageSource,color:string,alpha:number,w:number,h:number){
+const canvasPool:HTMLCanvasElement[]=[];
+function borrowCanvas(w:number,h:number){
+  const canvas=canvasPool.pop()??document.createElement('canvas');
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  if(ctx){
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.globalAlpha=1;
+    ctx.globalCompositeOperation='source-over';
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+  }
+  return canvas;
+}
+function returnCanvas(canvas:HTMLCanvasElement){
+  if(canvasPool.length<6)canvasPool.push(canvas);
+}
+
+function paintBinaryTint(ctx:CanvasRenderingContext2D,bin:CanvasImageSource,color:string,alpha:number,w:number,h:number){
   const [r,g,b]=hexRgb(color);
-  const tmp=document.createElement('canvas');
-  tmp.width=w;tmp.height=h;
-  const tctx=tmp.getContext('2d',{willReadFrequently:true});
-  if(!tctx)return;
-  binarizeMask(tctx,img,w,h);
   ctx.save();
   ctx.clearRect(0,0,w,h);
-  ctx.drawImage(tmp,0,0);
+  ctx.drawImage(bin,0,0);
   ctx.globalCompositeOperation='source-in';
   ctx.fillStyle=`rgba(${r},${g},${b},${alpha})`;
   ctx.fillRect(0,0,w,h);
   ctx.restore();
 }
 
+function paintTint(ctx:CanvasRenderingContext2D,img:CanvasImageSource,color:string,alpha:number,w:number,h:number){
+  const tmp=borrowCanvas(w,h);
+  try{
+    const tctx=tmp.getContext('2d',{willReadFrequently:true});
+    if(!tctx)return;
+    binarizeMask(tctx,img,w,h);
+    paintBinaryTint(ctx,tmp,color,alpha,w,h);
+  }finally{returnCanvas(tmp)}
+}
+
+function paintBinaryRing(ctx:CanvasRenderingContext2D,bin:CanvasImageSource,w:number,h:number,outlinePx:number,outlineAlpha:number){
+  const white=borrowCanvas(w,h);
+  const ring=borrowCanvas(w,h);
+  try{
+    const wctx=white.getContext('2d',{willReadFrequently:true});
+    const rctx=ring.getContext('2d',{willReadFrequently:true});
+    if(!wctx||!rctx)return;
+    wctx.drawImage(bin,0,0);
+    wctx.globalCompositeOperation='source-in';
+    wctx.fillStyle=`rgba(255,255,255,${outlineAlpha})`;
+    wctx.fillRect(0,0,w,h);
+    for(const off of outlineOffsets(outlinePx))rctx.drawImage(white,off.x,off.y);
+    rctx.globalCompositeOperation='destination-out';
+    rctx.drawImage(bin,0,0);
+    ctx.drawImage(ring,0,0);
+  }finally{returnCanvas(white);returnCanvas(ring)}
+}
+
 function paintWhiteRing(ctx:CanvasRenderingContext2D,img:CanvasImageSource,w:number,h:number,outlinePx:number,outlineAlpha:number){
-  const bin=document.createElement('canvas');
-  bin.width=w;bin.height=h;
-  const bctx=bin.getContext('2d');
-  if(!bctx)return;
-  binarizeMask(bctx,img,w,h);
-  const white=document.createElement('canvas');
-  white.width=w;white.height=h;
-  const wctx=white.getContext('2d');
-  if(!wctx)return;
-  wctx.drawImage(bin,0,0);
-  wctx.globalCompositeOperation='source-in';
-  wctx.fillStyle=`rgba(255,255,255,${outlineAlpha})`;
-  wctx.fillRect(0,0,w,h);
-  const ring=document.createElement('canvas');
-  ring.width=w;ring.height=h;
-  const rctx=ring.getContext('2d');
-  if(!rctx)return;
-  for(const off of outlineOffsets(outlinePx))rctx.drawImage(white,off.x,off.y);
-  rctx.globalCompositeOperation='destination-out';
-  rctx.drawImage(bin,0,0);
-  ctx.drawImage(ring,0,0);
+  const bin=borrowCanvas(w,h);
+  try{
+    const bctx=bin.getContext('2d',{willReadFrequently:true});
+    if(!bctx)return;
+    binarizeMask(bctx,img,w,h);
+    paintBinaryRing(ctx,bin,w,h,outlinePx,outlineAlpha);
+  }finally{returnCanvas(bin)}
 }
 
 function paintOutlinedTint(ctx:CanvasRenderingContext2D,img:CanvasImageSource,color:string,alpha:number,w:number,h:number,outlinePx:number,outlineAlpha:number){
-  paintTint(ctx,img,color,alpha,w,h);
-  paintWhiteRing(ctx,img,w,h,outlinePx,outlineAlpha);
-}
-
-function layerOutlinePx(layer:HTMLCanvasElement){
-  const displayW=layer.getBoundingClientRect().width;
-  return Math.max(2,Math.round(2.2*layer.width/Math.max(1,displayW)));
+  const bin=borrowCanvas(w,h);
+  try{
+    const bctx=bin.getContext('2d',{willReadFrequently:true});
+    if(!bctx)return;
+    binarizeMask(bctx,img,w,h);
+    paintBinaryTint(ctx,bin,color,alpha,w,h);
+    paintBinaryRing(ctx,bin,w,h,outlinePx,outlineAlpha);
+  }finally{returnCanvas(bin)}
 }
 
 function readBounds(canvas:HTMLCanvasElement){
@@ -156,6 +183,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
   const dragPan=useRef<{x:number;y:number;panX:number;panY:number}|null>(null);
   const overlayImgs=useRef<Record<number,HTMLImageElement>>({});
   const overlayAlpha=useRef<Record<number,Uint8ClampedArray>>({});
+  const overlayCentroid=useRef<Record<number,{x:number;y:number}|null>>({});
   const [size,setSize]=useState({width:1,height:1});
   const [viewport,setViewport]=useState({width:1,height:1});
   const [pan,setPan]=useState({x:0,y:0});
@@ -181,7 +209,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
     const ctx=layer.getContext('2d');
     if(!ctx)return;
     ctx.clearRect(0,0,layer.width,layer.height);
-    const outlinePx=layerOutlinePx(layer);
+    const outlinePx=overlayOutlineRadius(layer.width,Math.max(1,size.width*displayScale));
     const labels:{id:number;name:string;x:number;y:number}[]=[];
     for(const overlay of props.overlays){
       const img=imgs[overlay.id];
@@ -189,18 +217,20 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
       if(!img)continue;
       if(paintOverlayCopy(overlay.id,props.focusedId)){
         const tone=overlayTone(overlay.id,props.focusedId,props.selectedIds);
-        const tmp=document.createElement('canvas');
-        tmp.width=layer.width;tmp.height=layer.height;
-        const tctx=tmp.getContext('2d');
-        if(!tctx)continue;
-        paintOutlinedTint(tctx,img,overlay.color,overlayFillAlpha(tone),layer.width,layer.height,outlinePx,overlayOutlineAlpha(tone));
-        ctx.drawImage(tmp,0,0);
+        const tmp=borrowCanvas(layer.width,layer.height);
+        try{
+          const tctx=tmp.getContext('2d',{willReadFrequently:true});
+          if(tctx){
+            paintOutlinedTint(tctx,img,overlay.color,overlayFillAlpha(tone),layer.width,layer.height,outlinePx,overlayOutlineAlpha(tone));
+            ctx.drawImage(tmp,0,0);
+          }
+        }finally{returnCanvas(tmp)}
       }
       if(overlay.id===props.focusedId||!alpha)continue;
       const mw=img.naturalWidth||img.width;
       const mh=img.naturalHeight||img.height;
-      const c=maskCentroid(alpha,mw,mh);
-      if(c)labels.push({id:overlay.id,name:overlay.name,x:c.x/Math.max(1,mw)*layer.width,y:c.y/Math.max(1,mh)*layer.height});
+      const c=overlayCentroid.current[overlay.id]??maskCentroid(alpha,mw,mh);
+      if(c)labels.push({id:overlay.id,name:overlay.name,x:c.x/Math.max(1,mw)*size.width,y:c.y/Math.max(1,mh)*size.height});
     }
     const live=canvasRef.current;
     if(live)paintWhiteRing(ctx,live,layer.width,layer.height,outlinePx,overlayOutlineAlpha('focused'));
@@ -210,8 +240,10 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
   const refreshBounds=()=>{
     const c=canvasRef.current;
     setBounds(c?readBounds(c):null);
-    paintOverlayLayer(overlayImgs.current,overlayAlpha.current);
+    paintRef.current(overlayImgs.current,overlayAlpha.current);
   };
+  const paintRef=useRef(paintOverlayLayer);
+  paintRef.current=paintOverlayLayer;
 
   const loadMaskDataUrl=async(url:string|null)=>{
     const c=canvasRef.current;
@@ -294,29 +326,47 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
     tmp.width=c.width;tmp.height=c.height;
     tmp.getContext('2d')!.drawImage(c,0,0);
     paintTint(ctx,tmp,labelColor,MASK_FILL_ALPHA,c.width,c.height);
-    paintOverlayLayer(overlayImgs.current,overlayAlpha.current);
+    paintRef.current(overlayImgs.current,overlayAlpha.current);
   },[labelColor]);
 
   useEffect(()=>{
     let stop=false;
     const nextImgs:Record<number,HTMLImageElement>={};
     const nextAlpha:Record<number,Uint8ClampedArray>={};
+    const nextCentroid:Record<number,{x:number;y:number}|null>={};
     Promise.all(props.overlays.map(async overlay=>{
       const im=await loadImage(overlay.url);
       const c=document.createElement('canvas');
       c.width=im.naturalWidth||im.width;
       c.height=im.naturalHeight||im.height;
       const ctx=c.getContext('2d',{willReadFrequently:true});
-      if(ctx){ctx.drawImage(im,0,0);nextAlpha[overlay.id]=ctx.getImageData(0,0,c.width,c.height).data}
+      if(ctx){
+        ctx.drawImage(im,0,0);
+        const data=ctx.getImageData(0,0,c.width,c.height).data;
+        nextAlpha[overlay.id]=data;
+        nextCentroid[overlay.id]=maskCentroid(data,c.width,c.height);
+      }
       nextImgs[overlay.id]=im;
     })).then(()=>{
       if(stop)return;
       overlayImgs.current=nextImgs;
       overlayAlpha.current=nextAlpha;
-      paintOverlayLayer(nextImgs,nextAlpha);
+      overlayCentroid.current=nextCentroid;
+      paintRef.current(nextImgs,nextAlpha);
     }).catch(()=>{});
     return()=>{stop=true};
-  },[props.overlays,props.focusedId,props.selectedIds,size.width,size.height]);
+  },[props.overlays]);
+
+  useLayoutEffect(()=>{
+    const layer=overlayRef.current;
+    if(!layer||size.width<2||size.height<2)return;
+    const next=overlayBackingSize(size.width*displayScale,size.height*displayScale,window.devicePixelRatio||1);
+    if(layer.width!==next.width||layer.height!==next.height){
+      layer.width=next.width;
+      layer.height=next.height;
+    }
+    paintRef.current(overlayImgs.current,overlayAlpha.current);
+  },[displayScale,size.width,size.height,props.focusedId,props.selectedIds]);
 
   useLayoutEffect(()=>{
     if(draggingMenu)return;
@@ -553,13 +603,12 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,Props>(function 
       {props.imageUrl?<><img ref={imgRef} src={props.imageUrl} draggable={false} alt="annotation frame" onLoad={e=>{
         const im=e.currentTarget;
         setSize({width:im.naturalWidth,height:im.naturalHeight});
-        for(const node of [canvasRef.current,overlayRef.current]){
-          if(node&&(node.width!==im.naturalWidth||node.height!==im.naturalHeight)){
-            node.width=im.naturalWidth;node.height=im.naturalHeight;
-          }
+        const node=canvasRef.current;
+        if(node&&(node.width!==im.naturalWidth||node.height!==im.naturalHeight)){
+          node.width=im.naturalWidth;node.height=im.naturalHeight;
         }
       }}/>
-      <canvas ref={overlayRef} width={size.width} height={size.height} className="mask-canvas overlay-canvas"/>
+      <canvas ref={overlayRef} className="mask-canvas overlay-canvas"/>
       <canvas ref={canvasRef} width={size.width} height={size.height} className={`mask-canvas tool-${props.tool}${panning?' panning':''}`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onPointerLeave={()=>setCursor(null)} onContextMenu={e=>e.preventDefault()}/>
       <svg className="prompt-layer" viewBox={`0 0 ${size.width} ${size.height}`} preserveAspectRatio="none">
         {props.points.map((p,i)=><g key={i}><circle cx={p.x} cy={p.y} r={9} className={p.positive?'point-pos':'point-neg'}/><circle cx={p.x} cy={p.y} r={2.5} className="point-core"/></g>)}
